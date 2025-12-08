@@ -14,11 +14,11 @@ interface EdgeLineProps {
 }
 
 export const EdgeLine: React.FC<EdgeLineProps> = ({ edge, from, to }) => {
-  const x1 = from.x + CARD_WIDTH / 2;
-  const y1 = from.y + CARD_BORDER + CARD_PADDING / 2;
+  const x1 = from.pos_x + CARD_WIDTH / 2;
+  const y1 = from.pos_y + CARD_BORDER + CARD_PADDING / 2;
 
-  const x2 = to.x + CARD_WIDTH / 2;
-  const y2 = to.y + CARD_BORDER + CARD_PADDING / 2;
+  const x2 = to.pos_x + CARD_WIDTH / 2;
+  const y2 = to.pos_y + CARD_BORDER + CARD_PADDING / 2;
 
   return (
     <line

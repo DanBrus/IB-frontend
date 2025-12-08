@@ -23,7 +23,7 @@ export const NodeCard: React.FC<NodeCardProps> = ({ node, onMouseDown }) => {
   return (
     <div
         className="node-card"
-        style={{ left: node.x, top: node.y }}
+        style={{ left: node.pos_x, top: node.pos_y }}
         onMouseDown={handleMouseDown}
         >
         {/* ПОЛАРОИД */}
@@ -35,7 +35,7 @@ export const NodeCard: React.FC<NodeCardProps> = ({ node, onMouseDown }) => {
             }}
         >
             <div className="node-card__photo" />
-            <div className="node-card__title">{node.title}</div>
+            <div className="node-card__title">{node.name}</div>
         </div>
 
         {isOpen && (

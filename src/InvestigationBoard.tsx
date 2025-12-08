@@ -7,11 +7,11 @@ interface InvestigationBoardProps {
   nodes: BoardNode[];
   edges: BoardEdge[];
   title?: string;
-  onNodePositionChange?: (id: string, x: number, y: number) => void;
+  onNodePositionChange?: (id: number, x: number, y: number) => void;
 }
 
 type DragState = {
-  nodeId: string;
+  nodeId: number;
   offsetX: number;
   offsetY: number;
 } | null;
@@ -23,8 +23,8 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   onNodePositionChange,
 }) => {
   const nodesById = useMemo(() => {
-    const map = new Map<string, BoardNode>();
-    nodes.forEach((n) => map.set(n.id, n));
+    const map = new Map<number, BoardNode>();
+    nodes.forEach((n) => map.set(n.node_id, n));
     return map;
   }, [nodes]);
 
@@ -43,9 +43,9 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
     const mouseY = e.clientY - rect.top;
 
     setDrag({
-      nodeId: node.id,
-      offsetX: mouseX - node.x,
-      offsetY: mouseY - node.y,
+      nodeId: node.node_id,
+      offsetX: mouseX - node.pos_x,
+      offsetY: mouseY - node.pos_y,
     });
 
     e.preventDefault(); // чтобы не выделялся текст
@@ -114,7 +114,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         {/* Ноды */}
         {nodes.map((node) => (
           <NodeCard
-            key={node.id}
+            key={node.node_id}
             node={node}
             onMouseDown={handleNodeMouseDown}
           />
@@ -132,13 +132,13 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
           }}
         >
           {edges.map((edge) => {
-            const from = nodesById.get(edge.from);
-            const to = nodesById.get(edge.to);
+            const from = nodesById.get(edge.node1);
+            const to = nodesById.get(edge.node2);
             if (!from || !to) return null;
 
             return (
               <EdgeLine
-                key={edge.id}
+                key={edge.edge_id}
                 edge={edge}
                 from={from}
                 to={to}
