@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
-import { InvestigationBoard } from "./InvestigationBoard";
-import type { BoardNode, BoardEdge } from "./boardTypes";
+import { InvestigationBoardScreen } from "./InvestigationBoardScreen";
+import type { BoardNode, BoardEdge, BoardVersion } from "./boardTypes";
 import { boardDataSource } from "./boardDataSource";
 
 export default function App() {
   const [nodes, setNodes] = useState<BoardNode[]>([]);
   const [edges, setEdges] = useState<BoardEdge[]>([]);
+  const [versions, setVersions] = useState<BoardVersion[]>([]);
+  const [currentVersion, setCurrentVersion] = useState<string | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,7 +21,20 @@ export default function App() {
 
     (async () => {
       try {
-        const graph = await boardDataSource.getCurrentBoard(boardId);
+        const [versionsList, activeVersion] = await Promise.all([
+          boardDataSource.getVersions(boardId),
+          boardDataSource.getActiveVersion(boardId),
+        ]);
+
+        if (cancelled) return;
+
+        setVersions(versionsList);
+        setCurrentVersion(activeVersion);
+
+        const graph = await boardDataSource.getCurrentBoard(
+          boardId,
+          activeVersion
+        );
         if (cancelled) return;
 
         setNodes(graph.nodes);
@@ -36,22 +52,37 @@ export default function App() {
     };
   }, []);
 
-  const handleNodePositionChange = (id: number, pos_x: number, pos_y: number) => {
-    setNodes(prev =>
-      prev.map(node => (node.node_id === id ? { ...node, pos_x, pos_y } : node))
-    );
+  const handleChangeVersion = async (version: string) => {
+    const boardId = "demo-board";
+    setLoading(true);
+    setError(null);
+
+    try {
+      const graph = await boardDataSource.getCurrentBoard(boardId, version);
+      setNodes(graph.nodes);
+      setEdges(graph.edges);
+      setCurrentVersion(version);
+      setLoading(false);
+    } catch {
+      setError("Не удалось загрузить выбранную версию доски");
+      setLoading(false);
+    }
   };
 
   if (loading) return <div>Загружаем доску…</div>;
   if (error) return <div>{error}</div>;
+  if (!currentVersion) return <div>Не удалось определить активную версию</div>;
 
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
-      <InvestigationBoard
+      <InvestigationBoardScreen
+        key={currentVersion}
         title="Доска расследований"
-        nodes={nodes}
-        edges={edges}
-        onNodePositionChange={handleNodePositionChange}
+        initialNodes={nodes}
+        initialEdges={edges}
+        versions={versions}
+        currentVersion={currentVersion}
+        onChangeVersion={handleChangeVersion}
       />
     </div>
   );
