@@ -4,6 +4,7 @@ export type BoardNode = {
   pos_x: number;
   pos_y: number;
   description: string;
+  picture_path?: string | null; 
 };
 
 export type BoardEdge = {

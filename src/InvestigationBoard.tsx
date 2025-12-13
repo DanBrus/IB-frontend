@@ -31,8 +31,10 @@ interface InvestigationBoardProps {
 
   onSelectedNodeSave: (
     id: number,
-    patch: { name: string; description: string }
-  ) => void;
+    patch: { name: string; description: string; picture_path?: string | null }
+  ) => Promise<void>;
+
+  onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
 type DragState = {
@@ -60,6 +62,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   onNodeClick,
   onNodePositionChange,
   onSelectedNodeSave,
+  onUploadImage,
 }) => {
   const nodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
@@ -89,13 +92,11 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
     e.preventDefault();
     e.stopPropagation();
 
-    // во всех режимах, кроме idle, клики по нодам интерпретируются как "логические"
     if (mode !== "idle") {
       onNodeClick(node);
       return;
     }
 
-    // обычное перетаскивание
     const rect = boardRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
@@ -114,23 +115,15 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    const newX = mouseX - drag.offsetX;
-    const newY = mouseY - drag.offsetY;
-
-    onNodePositionChange(drag.nodeId, newX, newY);
+    onNodePositionChange(drag.nodeId, mouseX - drag.offsetX, mouseY - drag.offsetY);
   };
 
   const stopDragging = () => {
-    if (drag) {
-      setDrag(null);
-    }
+    if (drag) setDrag(null);
   };
 
-  const handleVersionSelectChange = (
-    e: React.ChangeEvent<HTMLSelectElement>
-  ) => {
-    const v = e.target.value;
-    onVersionChange(v);
+  const handleVersionSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    onVersionChange(e.target.value);
   };
 
   const handlePublishClick = () => {
@@ -138,21 +131,12 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
       "Вы действительно хотите опубликовать эту версию доски?\n" +
         "Действие необратимо: данные текущей версии будут перезаписаны."
     );
-    if (!ok) return;
-    onPublish();
+    if (ok) onPublish();
   };
 
   return (
-    <div
-      style={{
-        position: "relative",
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      {/* HEADER c заголовком, выбором версии и кнопкой публикации */}
+    <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+      {/* HEADER */}
       <div
         style={{
           padding: "10px 16px",
@@ -170,14 +154,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
       >
         <span>{title}</span>
         {versions.length > 0 && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 14,
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
             <span style={{ opacity: 0.8 }}>Версия:</span>
             <select
               value={currentVersion}
@@ -227,75 +204,37 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         onEdgeDeleteClick={onEdgeDeleteClick}
       />
 
-      {/* CONTENT: доска + инспектор */}
-      <div
-        style={{
-          position: "relative",
-          flexGrow: 1,
-          display: "flex",
-          backgroundColor: "#fdfdfd",
-          overflow: "hidden",
-        }}
-      >
-        {/* BOARD AREA */}
+      {/* CONTENT */}
+      <div style={{ position: "relative", flexGrow: 1, display: "flex", backgroundColor: "#fdfdfd", overflow: "hidden" }}>
         <div
           ref={boardRef}
           style={{
             position: "relative",
             flexGrow: 1,
             overflow: "hidden",
-            cursor:
-              drag != null
-                ? "grabbing"
-                : mode === "add-node"
-                ? "crosshair"
-                : "default",
+            cursor: drag != null ? "grabbing" : mode === "add-node" ? "crosshair" : "default",
           }}
           onClick={handleBoardClick}
           onMouseMove={handleBoardMouseMove}
           onMouseUp={stopDragging}
           onMouseLeave={stopDragging}
         >
-          {/* Ноды */}
           {nodes.map((node) => (
-            <NodeCard
-              key={node.node_id}
-              node={node}
-              onMouseDown={handleNodeMouseDown}
-            />
+            <NodeCard key={node.node_id} node={node} onMouseDown={handleNodeMouseDown} />
           ))}
 
-          {/* Линии поверх карточек */}
-          <svg
-            width="100%"
-            height="100%"
-            style={{
-              position: "absolute",
-              left: 0,
-              top: 0,
-              pointerEvents: "none",
-            }}
-          >
+          <svg width="100%" height="100%" style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>
             {edges.map((edge) => {
               const from = nodesById.get(edge.node1);
               const to = nodesById.get(edge.node2);
               if (!from || !to) return null;
-
-              return (
-                <EdgeLine
-                  key={edge.edge_id}
-                  edge={edge}
-                  from={from}
-                  to={to}
-                />
-              );
+              return <EdgeLine key={edge.edge_id} edge={edge} from={from} to={to} />;
             })}
           </svg>
         </div>
 
-        {/* NODE INSPECTOR */}
         {mode === "edit-node" && (
-          <NodeInspector node={selectedNode} onSave={onSelectedNodeSave} />
+          <NodeInspector node={selectedNode} onSaveNode={onSelectedNodeSave} onUploadImage={onUploadImage} />
         )}
       </div>
     </div>

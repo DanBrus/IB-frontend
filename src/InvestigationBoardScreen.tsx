@@ -3,6 +3,7 @@ import { InvestigationBoard } from "./InvestigationBoard";
 import type { BoardNode, BoardEdge, BoardVersion } from "./boardTypes";
 import type { BoardMode } from "./components/BoardToolbar";
 import { boardDataSource } from "./boardDataSource";
+import { fileDataSource } from "./fileDataSource";
 
 interface InvestigationBoardScreenProps {
   title?: string;
@@ -13,9 +14,7 @@ interface InvestigationBoardScreenProps {
   onChangeVersion: (version: string) => void;
 }
 
-export const InvestigationBoardScreen: React.FC<
-  InvestigationBoardScreenProps
-> = ({
+export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> = ({
   title = "Доска расследований",
   initialNodes,
   initialEdges,
@@ -27,9 +26,7 @@ export const InvestigationBoardScreen: React.FC<
   const [edges, setEdges] = useState<BoardEdge[]>(initialEdges);
 
   const [mode, setMode] = useState<BoardMode>("idle");
-  const [edgeActionFirstNodeId, setEdgeActionFirstNodeId] = useState<
-    number | null
-  >(null);
+  const [edgeActionFirstNodeId, setEdgeActionFirstNodeId] = useState<number | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
 
   const [isPublishing, setIsPublishing] = useState(false);
@@ -40,14 +37,9 @@ export const InvestigationBoardScreen: React.FC<
     return map;
   }, [nodes]);
 
-  const selectedNode =
-    selectedNodeId !== null ? nodesById.get(selectedNodeId) ?? null : null;
+  const selectedNode = selectedNodeId !== null ? nodesById.get(selectedNodeId) ?? null : null;
 
-  const resetEdgeAction = () => {
-    setEdgeActionFirstNodeId(null);
-  };
-
-  // --- переключатели режимов для тулбара ---
+  const resetEdgeAction = () => setEdgeActionFirstNodeId(null);
 
   const handleNodeAddClick = () => {
     setMode((prev) => (prev === "add-node" ? "idle" : "add-node"));
@@ -64,9 +56,7 @@ export const InvestigationBoardScreen: React.FC<
   const handleNodeEditClick = () => {
     setMode((prev) => (prev === "edit-node" ? "idle" : "edit-node"));
     resetEdgeAction();
-    if (mode === "edit-node") {
-      setSelectedNodeId(null);
-    }
+    if (mode === "edit-node") setSelectedNodeId(null);
   };
 
   const handleEdgeAddClick = () => {
@@ -81,54 +71,33 @@ export const InvestigationBoardScreen: React.FC<
     setSelectedNodeId(null);
   };
 
-  // --- действия доски ---
-
   const handleBoardClick = (x: number, y: number) => {
     if (mode !== "add-node") return;
 
-    const maxId =
-      nodes.length > 0
-        ? nodes.reduce(
-            (max, n) => (n.node_id > max ? n.node_id : max),
-            nodes[0].node_id
-          )
-        : 0;
+    const maxId = nodes.length > 0 ? nodes.reduce((m, n) => (n.node_id > m ? n.node_id : m), nodes[0].node_id) : 0;
     const newId = maxId + 1;
 
-    const newNode: BoardNode = {
-      node_id: newId,
-      name: `Node ${newId}`,
-      pos_x: x,
-      pos_y: y,
-      description: "",
-    };
+    setNodes((prev) => [
+      ...prev,
+      { node_id: newId, name: `Node ${newId}`, pos_x: x, pos_y: y, description: "", picture_path: null },
+    ]);
 
-    setNodes((prev) => [...prev, newNode]);
     setMode("idle");
   };
 
   const handleNodeClick = (node: BoardNode) => {
-    // удаление ноды
     if (mode === "delete-node") {
-      setNodes((prevNodes) =>
-        prevNodes.filter((n) => n.node_id !== node.node_id)
-      );
-      setEdges((prevEdges) =>
-        prevEdges.filter(
-          (edge) => edge.node1 !== node.node_id && edge.node2 !== node.node_id
-        )
-      );
+      setNodes((prev) => prev.filter((n) => n.node_id !== node.node_id));
+      setEdges((prev) => prev.filter((e) => e.node1 !== node.node_id && e.node2 !== node.node_id));
       setMode("idle");
       return;
     }
 
-    // выбор ноды для инспектора
     if (mode === "edit-node") {
       setSelectedNodeId(node.node_id);
       return;
     }
 
-    // добавление связи
     if (mode === "add-edge") {
       if (edgeActionFirstNodeId === null) {
         setEdgeActionFirstNodeId(node.node_id);
@@ -139,39 +108,20 @@ export const InvestigationBoardScreen: React.FC<
         resetEdgeAction();
         setMode("idle");
 
-        if (fromId === toId) {
-          return;
-        }
+        if (fromId === toId) return;
 
         const exists = edges.some(
-          (edge) =>
-            (edge.node1 === fromId && edge.node2 === toId) ||
-            (edge.node1 === toId && edge.node2 === fromId)
+          (e) => (e.node1 === fromId && e.node2 === toId) || (e.node1 === toId && e.node2 === fromId)
         );
-        if (exists) {
-          return;
-        }
+        if (exists) return;
 
-        const maxEdgeId =
-          edges.length > 0
-            ? edges.reduce(
-                (max, e) => (e.edge_id > max ? e.edge_id : max),
-                edges[0].edge_id
-              )
-            : 0;
+        const maxEdgeId = edges.length > 0 ? edges.reduce((m, e) => (e.edge_id > m ? e.edge_id : m), edges[0].edge_id) : 0;
 
-        const newEdge: BoardEdge = {
-          edge_id: maxEdgeId + 1,
-          node1: fromId,
-          node2: toId,
-        };
-
-        setEdges((prev) => [...prev, newEdge]);
+        setEdges((prev) => [...prev, { edge_id: maxEdgeId + 1, node1: fromId, node2: toId }]);
       }
       return;
     }
 
-    // удаление связи
     if (mode === "delete-edge") {
       if (edgeActionFirstNodeId === null) {
         setEdgeActionFirstNodeId(node.node_id);
@@ -183,45 +133,44 @@ export const InvestigationBoardScreen: React.FC<
         setMode("idle");
 
         const edgeToDelete = edges.find(
-          (edge) =>
-            (edge.node1 === n1 && edge.node2 === n2) ||
-            (edge.node1 === n2 && edge.node2 === n1)
+          (e) => (e.node1 === n1 && e.node2 === n2) || (e.node1 === n2 && e.node2 === n1)
         );
-
-        if (edgeToDelete) {
-          setEdges((prev) =>
-            prev.filter((e) => e.edge_id !== edgeToDelete.edge_id)
-          );
-        }
+        if (edgeToDelete) setEdges((prev) => prev.filter((e) => e.edge_id !== edgeToDelete.edge_id));
       }
       return;
     }
   };
 
   const handleNodePositionChange = (id: number, pos_x: number, pos_y: number) => {
-    setNodes((prev) =>
-      prev.map((node) =>
-        node.node_id === id ? { ...node, pos_x, pos_y } : node
-      )
-    );
+    setNodes((prev) => prev.map((n) => (n.node_id === id ? { ...n, pos_x, pos_y } : n)));
   };
 
-  const handleSelectedNodeSave = (
+  // PATCH узла (включая picture_path) — async, чтобы инспектор мог await
+  const handleSelectedNodeSave = async (
     id: number,
-    patch: { name: string; description: string }
+    patch: { name: string; description: string; picture_path?: string | null }
   ) => {
     setNodes((prev) =>
-      prev.map((node) =>
-        node.node_id === id
-          ? { ...node, name: patch.name, description: patch.description }
-          : node
+      prev.map((n) =>
+        n.node_id === id
+          ? {
+              ...n,
+              name: patch.name,
+              description: patch.description,
+              ...(patch.picture_path !== undefined ? { picture_path: patch.picture_path } : {}),
+            }
+          : n
       )
     );
   };
 
-  const handleVersionChange = (version: string) => {
-    onChangeVersion(version);
+  // Upload blob → {id,url}
+  const handleUploadImage = (blob: Blob) => {
+    // filename не критичен, но пусть будет
+    return fileDataSource.uploadImage(blob, "node.png");
   };
+
+  const handleVersionChange = (version: string) => onChangeVersion(version);
 
   const handlePublish = async () => {
     if (isPublishing) return;
@@ -234,10 +183,6 @@ export const InvestigationBoardScreen: React.FC<
         description: null,
         board_name: null,
       });
-      console.log("[InvestigationBoardScreen] Публикация завершена");
-    } catch (e) {
-      console.error("[InvestigationBoardScreen] Ошибка публикации", e);
-      // тут можно повесить UI-ошибку / тост, если понадобится
     } finally {
       setIsPublishing(false);
     }
@@ -263,6 +208,7 @@ export const InvestigationBoardScreen: React.FC<
       onNodeClick={handleNodeClick}
       onNodePositionChange={handleNodePositionChange}
       onSelectedNodeSave={handleSelectedNodeSave}
+      onUploadImage={handleUploadImage}
     />
   );
 };
