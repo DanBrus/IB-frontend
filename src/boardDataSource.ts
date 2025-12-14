@@ -19,8 +19,10 @@ export interface BoardDataSource {
 }
 
 // Базовый URL API — потом можно перенастроить через .env
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8001";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(
+  /\/$/,
+  ""
+);
 
 class HttpBoardDataSource implements BoardDataSource {
   async getCurrentBoard(boardId: string, version?: string): Promise<BoardGraph> {
