@@ -1,11 +1,6 @@
 import React from "react";
 import type { BoardNode, BoardEdge } from "../boardTypes";
-import {
-  CARD_WIDTH,
-  CARD_HEIGHT,
-  CARD_PADDING,
-  CARD_BORDER,
-} from "../cardLayout";
+import { CARD_WIDTH, CARD_PADDING, CARD_BORDER } from "../cardLayout";
 
 interface EdgeLineProps {
   edge: BoardEdge;
@@ -22,6 +17,7 @@ export const EdgeLine: React.FC<EdgeLineProps> = ({ edge, from, to }) => {
 
   return (
     <line
+      data-edge-id={edge.edge_id}
       x1={x1}
       y1={y1}
       x2={x2}
