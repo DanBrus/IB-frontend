@@ -2,7 +2,7 @@ export interface FileDataSource {
   uploadImage(file: Blob, filename?: string): Promise<{ id: string; url: string }>;
 }
 
-const FILE_BASE_URL = (import.meta.env.VITE_FILE_BASE_URL ?? "/api/files").replace(/\/$/, "");
+const FILE_BASE_URL = (import.meta.env.VITE_FILE_BASE_URL ?? "/api").replace(/\/$/, "");
 
 class HttpFileDataSource implements FileDataSource {
   async uploadImage(file: Blob, filename = "image.png"): Promise<{ id: string; url: string }> {
