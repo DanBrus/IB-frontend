@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { InvestigationBoard } from "./InvestigationBoard";
-import type { BoardNode, BoardEdge, BoardVersion } from "./boardTypes";
+import type { BoardNode, BoardEdge, BoardVersion, BoardNodeType } from "./boardTypes";
+import { BOARD_NODE_TYPES } from "./boardTypes";
 import type { BoardMode } from "./components/BoardToolbar";
 import { boardDataSource } from "./boardDataSource";
 import { fileDataSource } from "./fileDataSource";
@@ -12,6 +13,8 @@ interface InvestigationBoardScreenProps {
   versions: BoardVersion[];
   currentVersion: string;
   onChangeVersion: (version: string) => void;
+  onCreateVersion: (payload: { version: string; name: string; description: string }) => Promise<void>;
+  onDeleteVersion: (version: string) => Promise<void>;
 }
 
 export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> = ({
@@ -21,6 +24,8 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   versions,
   currentVersion,
   onChangeVersion,
+  onCreateVersion,
+  onDeleteVersion,
 }) => {
   const [nodes, setNodes] = useState<BoardNode[]>(initialNodes);
   const [edges, setEdges] = useState<BoardEdge[]>(initialEdges);
@@ -79,7 +84,15 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
 
     setNodes((prev) => [
       ...prev,
-      { node_id: newId, name: `Node ${newId}`, pos_x: x, pos_y: y, description: "", picture_path: null },
+      {
+        node_id: newId,
+        name: `Node ${newId}`,
+        pos_x: x,
+        pos_y: y,
+        node_type: BOARD_NODE_TYPES[0],
+        description: "",
+        picture_path: null,
+      },
     ]);
 
     setMode("idle");
@@ -148,7 +161,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   // PATCH узла (включая picture_path) — async, чтобы инспектор мог await
   const handleSelectedNodeSave = async (
     id: number,
-    patch: { name: string; description: string; picture_path?: string | null }
+    patch: { name: string; description: string; node_type: BoardNodeType; picture_path?: string | null }
   ) => {
     setNodes((prev) =>
       prev.map((n) =>
@@ -157,6 +170,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
               ...n,
               name: patch.name,
               description: patch.description,
+              node_type: patch.node_type,
               ...(patch.picture_path !== undefined ? { picture_path: patch.picture_path } : {}),
             }
           : n
@@ -198,6 +212,8 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       versions={versions}
       currentVersion={currentVersion}
       onVersionChange={handleVersionChange}
+      onCreateVersion={onCreateVersion}
+      onDeleteVersion={onDeleteVersion}
       onPublish={handlePublish}
       onNodeAddClick={handleNodeAddClick}
       onNodeDeleteClick={handleNodeDeleteClick}

@@ -1,4 +1,5 @@
 import type { BoardNode, BoardEdge, BoardVersion } from "./boardTypes";
+import { BOARD_NODE_TYPES } from "./boardTypes";
 
 export type BoardGraph = {
   nodes: BoardNode[];
@@ -9,6 +10,8 @@ export interface BoardDataSource {
   getCurrentBoard(boardId: string, version?: string): Promise<BoardGraph>;
   getVersions(boardId: string): Promise<BoardVersion[]>;
   getActiveVersion(boardId: string): Promise<string>;
+  createVersion(payload: { version: string; name: string; description: string }): Promise<void>;
+  deleteVersion(payload: { version: string }): Promise<void>;
   updateBoard(payload: {
     version: string;
     nodes: BoardNode[];
@@ -19,7 +22,7 @@ export interface BoardDataSource {
 }
 
 // Базовый URL API — потом можно перенастроить через .env
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8001/").replace(
   /\/$/,
   ""
 );
@@ -64,8 +67,13 @@ class HttpBoardDataSource implements BoardDataSource {
         data
       );
 
+      const nodes = (data.nodes as BoardNode[]).map((n) => ({
+        ...n,
+        node_type: (n as any).node_type ?? BOARD_NODE_TYPES[0],
+      }));
+
       return {
-        nodes: data.nodes as BoardNode[],
+        nodes,
         edges: data.edges as BoardEdge[],
       };
     } catch (error) {
@@ -153,6 +161,82 @@ class HttpBoardDataSource implements BoardDataSource {
         "[BoardDataSource] Ошибка при запросе активной версии",
         error
       );
+      throw error;
+    }
+  }
+
+  async createVersion(payload: {
+    version: string;
+    name: string;
+    description: string;
+  }): Promise<void> {
+    const url = `${API_BASE_URL}/graph/versions`;
+
+    console.log("[BoardDataSource] Создаем новую версию", {
+      url,
+      payload,
+    });
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        console.error(
+          "[BoardDataSource] Ошибка при создании версии",
+          res.status,
+          res.statusText
+        );
+        throw new Error(
+          `HTTP error ${res.status}: ${res.statusText || "Unknown error"}`
+        );
+      }
+
+      await res.json();
+      console.log("[BoardDataSource] Версия успешно создана");
+    } catch (error) {
+      console.error("[BoardDataSource] Ошибка при создании версии", error);
+      throw error;
+    }
+  }
+
+  async deleteVersion(payload: { version: string }): Promise<void> {
+    const url = `${API_BASE_URL}/graph/versions`;
+
+    console.log("[BoardDataSource] Удаляем версию", {
+      url,
+      payload,
+    });
+
+    try {
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        console.error(
+          "[BoardDataSource] Ошибка при удалении версии",
+          res.status,
+          res.statusText
+        );
+        throw new Error(
+          `HTTP error ${res.status}: ${res.statusText || "Unknown error"}`
+        );
+      }
+
+      await res.json();
+      console.log("[BoardDataSource] Версия успешно удалена");
+    } catch (error) {
+      console.error("[BoardDataSource] Ошибка при удалении версии", error);
       throw error;
     }
   }

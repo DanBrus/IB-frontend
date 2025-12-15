@@ -69,6 +69,67 @@ export default function App() {
     }
   };
 
+  const handleCreateVersion = async (payload: { version: string; name: string; description: string }) => {
+    const boardId = "demo-board";
+    setLoading(true);
+    setError(null);
+
+    try {
+      await boardDataSource.createVersion(payload);
+      const [versionsList, graph] = await Promise.all([
+        boardDataSource.getVersions(boardId),
+        boardDataSource.getCurrentBoard(boardId, payload.version),
+      ]);
+      setVersions(versionsList);
+      setNodes(graph.nodes);
+      setEdges(graph.edges);
+      setCurrentVersion(payload.version);
+      setLoading(false);
+    } catch {
+      setError("Не удалось создать новую версию доски");
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteVersion = async (version: string) => {
+    const boardId = "demo-board";
+    try {
+      const active = await boardDataSource.getActiveVersion(boardId);
+      if (active === version) {
+        throw new Error("Невозможно удалить активную версию доски");
+      }
+
+      await boardDataSource.deleteVersion({ version });
+
+      const versionsList = await boardDataSource.getVersions(boardId);
+      setVersions(versionsList);
+
+      let nextVersion: string | null = currentVersion;
+      if (!versionsList.some((v) => v.version === nextVersion)) {
+        const activeAfter = await boardDataSource.getActiveVersion(boardId);
+        nextVersion =
+          versionsList.find((v) => v.version === activeAfter)?.version ??
+          versionsList[0]?.version ??
+          null;
+      }
+
+      if (nextVersion) {
+        const graph = await boardDataSource.getCurrentBoard(boardId, nextVersion);
+        setNodes(graph.nodes);
+        setEdges(graph.edges);
+        setCurrentVersion(nextVersion);
+      } else {
+        setNodes([]);
+        setEdges([]);
+        setCurrentVersion(null);
+      }
+    } catch (e: any) {
+      const msg = e?.message ? String(e.message) : "Не удалось удалить версию доски";
+      console.error(msg);
+      throw new Error(msg);
+    }
+  };
+
   if (loading) return <div>Загружаем доску…</div>;
   if (error) return <div>{error}</div>;
   if (!currentVersion) return <div>Не удалось определить активную версию</div>;
@@ -83,6 +144,8 @@ export default function App() {
         versions={versions}
         currentVersion={currentVersion}
         onChangeVersion={handleChangeVersion}
+        onCreateVersion={handleCreateVersion}
+        onDeleteVersion={handleDeleteVersion}
       />
     </div>
   );

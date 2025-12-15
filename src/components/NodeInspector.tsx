@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
-import type { BoardNode } from "../boardTypes";
+import { BOARD_NODE_TYPES, type BoardNode, type BoardNodeType } from "../boardTypes";
 import { FILE_RES_BASE_URL } from "../fileDataSource";
 
 type Area = { x: number; y: number; width: number; height: number };
@@ -11,7 +11,7 @@ interface NodeInspectorProps {
   // Сохранение полей узла (локально, после upload)
   onSaveNode: (
     id: number,
-    patch: { name: string; description: string; picture_path?: string | null }
+    patch: { name: string; description: string; node_type: BoardNodeType; picture_path?: string | null }
   ) => Promise<void>;
 
   // Upload кропнутой картинки → возвращает {id,url}, нам нужен id
@@ -71,6 +71,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   onUploadImage,
 }) => {
   const [name, setName] = useState("");
+  const [nodeType, setNodeType] = useState<BoardNodeType>(BOARD_NODE_TYPES[0]);
   const [description, setDescription] = useState("");
 
   // image flow
@@ -97,9 +98,11 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   useEffect(() => {
     if (node) {
       setName(node.name ?? "");
+      setNodeType(node.node_type ?? BOARD_NODE_TYPES[0]);
       setDescription(node.description ?? "");
     } else {
       setName("");
+      setNodeType(BOARD_NODE_TYPES[0]);
       setDescription("");
     }
 
@@ -203,6 +206,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
 
       await onSaveNode(node.node_id, {
         name: clampName(name),
+        node_type: nodeType,
         description,
         ...(imageChanged ? { picture_path: picture_id ?? null } : {}),
       });
@@ -262,6 +266,32 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             boxSizing: "border-box",
           }}
         />
+      </label>
+
+      {/* Тип */}
+      <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
+        Тип узла
+        <select
+          value={nodeType}
+          disabled={disabled}
+          onChange={(e) => setNodeType(e.target.value as BoardNodeType)}
+          style={{
+            width: "100%",
+            marginTop: 4,
+            padding: "6px 8px",
+            fontSize: 13,
+            borderRadius: 6,
+            border: "1px solid #ccc",
+            boxSizing: "border-box",
+            backgroundColor: disabled ? "#f2f2f2" : "#fff",
+          }}
+        >
+          {BOARD_NODE_TYPES.map((type) => (
+            <option key={type} value={type}>
+              {type}
+            </option>
+          ))}
+        </select>
       </label>
 
       {/* Описание */}
