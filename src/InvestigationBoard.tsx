@@ -355,7 +355,11 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
             <NodeCard key={node.node_id} node={node} onMouseDown={handleNodeMouseDown} />
           ))}
 
-          <svg width="100%" height="100%" style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>
+          <svg
+            width="100%"
+            height="100%"
+            style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none", zIndex: 5 }}
+          >
             {edges.map((edge) => {
               const from = nodesById.get(edge.node1);
               const to = nodesById.get(edge.node2);
