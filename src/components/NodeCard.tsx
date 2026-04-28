@@ -6,9 +6,16 @@ import "./NodeCard.css";
 interface NodeCardProps {
   node: BoardNode;
   onMouseDown?: (e: React.MouseEvent<HTMLDivElement>, node: BoardNode) => void;
+  onDoubleClick?: (node: BoardNode) => void;
+  showInlineDescription?: boolean;
 }
 
-export const NodeCard: React.FC<NodeCardProps> = ({ node, onMouseDown }) => {
+export const NodeCard: React.FC<NodeCardProps> = ({
+  node,
+  onMouseDown,
+  onDoubleClick,
+  showInlineDescription = true,
+}) => {
   const [isOpen, setIsOpen] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
 
@@ -18,7 +25,10 @@ export const NodeCard: React.FC<NodeCardProps> = ({ node, onMouseDown }) => {
 
   const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     e.stopPropagation();
-    setIsOpen((prev) => !prev);
+    onDoubleClick?.(node);
+    if (showInlineDescription) {
+      setIsOpen((prev) => !prev);
+    }
   };
 
   const imgSrc = useMemo(() => {
@@ -63,7 +73,7 @@ export const NodeCard: React.FC<NodeCardProps> = ({ node, onMouseDown }) => {
         <div className="node-card__title">{node.name}</div>
       </div>
 
-      {isOpen && <div className="node-card__sheet">{node.description}</div>}
+      {showInlineDescription && isOpen && <div className="node-card__sheet notebook-sheet">{node.description}</div>}
     </div>
   );
 };

@@ -1,3 +1,5 @@
+import { authClient } from "./auth/authClient";
+
 export interface FileDataSource {
   uploadImage(file: Blob, filename?: string): Promise<{ id: string; url: string }>;
 }
@@ -11,9 +13,17 @@ class HttpFileDataSource implements FileDataSource {
     const fd = new FormData();
     fd.append("file", file, filename);
 
-    const res = await fetch(url, { method: "POST", body: fd });
+    const res = await fetch(url, {
+      method: "POST",
+      headers: authClient.getAuthHeaders(),
+      body: fd,
+    });
 
     if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        authClient.clearToken();
+      }
+
       throw new Error(`File upload failed: HTTP ${res.status} ${res.statusText}`);
     }
 

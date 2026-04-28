@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import type { BoardMode } from "./components/BoardToolbar";
-import type { BoardNode, BoardEdge, BoardVersion, BoardNodeType } from "./boardTypes";
+import type { BoardNode, BoardEdge, BoardVersion, BoardNodeType, BoardAccessMode } from "./boardTypes";
 import { InvestigationBoardHeader } from "./components/InvestigationBoardHeader";
 import { InvestigationBoardToolbar } from "./components/InvestigationBoardToolbar";
 import { InvestigationBoardWorkspace } from "./components/InvestigationBoardWorkspace";
@@ -14,9 +14,11 @@ interface InvestigationBoardProps {
 
   versions: BoardVersion[];
   currentVersion: string;
+  accessMode: BoardAccessMode;
   onVersionChange: (version: string) => void;
   onCreateVersion: (payload: { version: string; name: string; description: string }) => Promise<void>;
   onDeleteVersion: (version: string) => Promise<void>;
+  onRequestEditMode: () => void;
 
   onPublish: () => void;
 
@@ -46,9 +48,11 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   selectedNode,
   versions,
   currentVersion,
+  accessMode,
   onVersionChange,
   onCreateVersion,
   onDeleteVersion,
+  onRequestEditMode,
   onPublish,
   onNodeAddClick,
   onNodeDeleteClick,
@@ -73,6 +77,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   const [deleteVersionSaving, setDeleteVersionSaving] = useState(false);
 
   const openNewVersionDialog = () => {
+    if (accessMode !== "edit") return;
     setNewVersionOpen(true);
     setNewVersion("");
     setNewVersionName("");
@@ -86,6 +91,8 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   };
 
   const handleCreateVersionSubmit = async () => {
+    if (accessMode !== "edit") return;
+
     const version = newVersion.trim();
     const name = newVersionName.trim();
     const description = newVersionDescription.trim();
@@ -112,6 +119,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   };
 
   const openDeleteVersionDialog = () => {
+    if (accessMode !== "edit") return;
     setDeleteVersionError(null);
     setDeleteVersionId(currentVersion || versions[0]?.version || "");
     setDeleteVersionOpen(true);
@@ -123,6 +131,8 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   };
 
   const handleDeleteVersionSubmit = async () => {
+    if (accessMode !== "edit") return;
+
     const version = deleteVersionId.trim();
     if (!version) {
       setDeleteVersionError("Выберите версию для удаления.");
@@ -151,27 +161,33 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         title={title}
         versions={versions}
         currentVersion={currentVersion}
+        accessMode={accessMode}
         onVersionChange={onVersionChange}
         onPublish={onPublish}
+        onRequestEditMode={onRequestEditMode}
       />
 
-      <InvestigationBoardToolbar
-        mode={mode}
-        onNodeAddClick={onNodeAddClick}
-        onNodeDeleteClick={onNodeDeleteClick}
-        onNodeEditClick={onNodeEditClick}
-        onEdgeAddClick={onEdgeAddClick}
-        onEdgeDeleteClick={onEdgeDeleteClick}
-        onNewVersionClick={openNewVersionDialog}
-        onDeleteVersionClick={openDeleteVersionDialog}
-        canDeleteVersion={versions.length > 0}
-      />
+      {accessMode === "edit" && (
+        <InvestigationBoardToolbar
+          accessMode={accessMode}
+          mode={mode}
+          onNodeAddClick={onNodeAddClick}
+          onNodeDeleteClick={onNodeDeleteClick}
+          onNodeEditClick={onNodeEditClick}
+          onEdgeAddClick={onEdgeAddClick}
+          onEdgeDeleteClick={onEdgeDeleteClick}
+          onNewVersionClick={openNewVersionDialog}
+          onDeleteVersionClick={openDeleteVersionDialog}
+          canDeleteVersion={versions.length > 0}
+        />
+      )}
 
       <InvestigationBoardWorkspace
         nodes={nodes}
         edges={edges}
         mode={mode}
         selectedNode={selectedNode}
+        accessMode={accessMode}
         onBoardClick={onBoardClick}
         onNodeClick={onNodeClick}
         onNodePositionChange={onNodePositionChange}

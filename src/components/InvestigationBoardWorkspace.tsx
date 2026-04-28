@@ -1,9 +1,10 @@
 import React, { useMemo, useRef, useState } from "react";
 import type { BoardMode } from "./BoardToolbar";
-import type { BoardNode, BoardEdge, BoardNodeType } from "../boardTypes";
+import type { BoardNode, BoardEdge, BoardNodeType, BoardAccessMode } from "../boardTypes";
 import { NodeCard } from "./NodeCard";
 import { EdgeLine } from "./EdgeLine";
 import { NodeInspector } from "./NodeInspector";
+import { NodeReadPanel } from "./NodeReadPanel";
 
 type DragState = {
   nodeId: number;
@@ -16,6 +17,7 @@ interface InvestigationBoardWorkspaceProps {
   edges: BoardEdge[];
   mode: BoardMode;
   selectedNode: BoardNode | null;
+  accessMode: BoardAccessMode;
   onBoardClick: (x: number, y: number) => void;
   onNodeClick: (node: BoardNode) => void;
   onNodePositionChange?: (id: number, x: number, y: number) => void;
@@ -31,6 +33,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   edges,
   mode,
   selectedNode,
+  accessMode,
   onBoardClick,
   onNodeClick,
   onNodePositionChange,
@@ -39,6 +42,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
 }) => {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<DragState>(null);
+  const [readPanelNodeId, setReadPanelNodeId] = useState<number | null>(null);
 
   const nodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
@@ -46,8 +50,12 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
     return map;
   }, [nodes]);
 
+  const readPanelNode =
+    accessMode === "read" && readPanelNodeId !== null ? nodesById.get(readPanelNodeId) ?? null : null;
+
   const handleBoardClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!boardRef.current) return;
+    if (accessMode === "read") return;
 
     const rect = boardRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
@@ -61,6 +69,19 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
 
     e.preventDefault();
     e.stopPropagation();
+
+    if (accessMode === "read") {
+      const rect = boardRef.current.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      setDrag({
+        nodeId: node.node_id,
+        offsetX: mouseX - node.pos_x,
+        offsetY: mouseY - node.pos_y,
+      });
+      return;
+    }
 
     if (mode !== "idle") {
       onNodeClick(node);
@@ -92,15 +113,27 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
     if (drag) setDrag(null);
   };
 
+  const handleNodeDoubleClick = (node: BoardNode) => {
+    if (accessMode !== "read") return;
+    setReadPanelNodeId(node.node_id);
+  };
+
+  const handleReadPanelClose = () => {
+    setReadPanelNodeId(null);
+  };
+
   return (
-    <div style={{ position: "relative", flexGrow: 1, display: "flex", backgroundColor: "#fdfdfd", overflow: "hidden" }}>
+    <div
+      data-access-mode={accessMode}
+      style={{ position: "relative", flexGrow: 1, display: "flex", backgroundColor: "#fdfdfd", overflow: "hidden" }}
+    >
       <div
         ref={boardRef}
         style={{
           position: "relative",
           flexGrow: 1,
           overflow: "hidden",
-          cursor: drag != null ? "grabbing" : mode === "add-node" ? "crosshair" : "default",
+          cursor: drag != null ? "grabbing" : accessMode === "edit" && mode === "add-node" ? "crosshair" : "default",
         }}
         onClick={handleBoardClick}
         onMouseMove={handleBoardMouseMove}
@@ -108,7 +141,13 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
         onMouseLeave={stopDragging}
       >
         {nodes.map((node) => (
-          <NodeCard key={node.node_id} node={node} onMouseDown={handleNodeMouseDown} />
+          <NodeCard
+            key={node.node_id}
+            node={node}
+            onMouseDown={handleNodeMouseDown}
+            onDoubleClick={handleNodeDoubleClick}
+            showInlineDescription={accessMode === "edit"}
+          />
         ))}
 
         <svg
@@ -125,8 +164,12 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
         </svg>
       </div>
 
-      {mode === "edit-node" && (
+      {accessMode === "edit" && mode === "edit-node" && (
         <NodeInspector node={selectedNode} onSaveNode={onSelectedNodeSave} onUploadImage={onUploadImage} />
+      )}
+
+      {accessMode === "read" && readPanelNodeId !== null && (
+        <NodeReadPanel node={readPanelNode} onClose={handleReadPanelClose} />
       )}
     </div>
   );

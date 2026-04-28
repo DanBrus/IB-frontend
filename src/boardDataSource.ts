@@ -1,5 +1,6 @@
 import type { BoardNode, BoardEdge, BoardVersion } from "./boardTypes";
 import { BOARD_NODE_TYPES } from "./boardTypes";
+import { authClient } from "./auth/authClient";
 
 export type BoardGraph = {
   nodes: BoardNode[];
@@ -26,6 +27,19 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:800
   /\/$/,
   ""
 );
+
+function getMutationHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    ...authClient.getAuthHeaders(),
+  };
+}
+
+function handleAuthFailure(res: Response): void {
+  if (res.status === 401 || res.status === 403) {
+    authClient.clearToken();
+  }
+}
 
 class HttpBoardDataSource implements BoardDataSource {
   async getCurrentBoard(boardId: string, version?: string): Promise<BoardGraph> {
@@ -180,13 +194,12 @@ class HttpBoardDataSource implements BoardDataSource {
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: getMutationHeaders(),
         body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
+        handleAuthFailure(res);
         console.error(
           "[BoardDataSource] Ошибка при создании версии",
           res.status,
@@ -216,13 +229,12 @@ class HttpBoardDataSource implements BoardDataSource {
     try {
       const res = await fetch(url, {
         method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: getMutationHeaders(),
         body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
+        handleAuthFailure(res);
         console.error(
           "[BoardDataSource] Ошибка при удалении версии",
           res.status,
@@ -258,9 +270,7 @@ class HttpBoardDataSource implements BoardDataSource {
     try {
       const res = await fetch(url, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: getMutationHeaders(),
         body: JSON.stringify({
           version: payload.version,
           nodes: payload.nodes,
@@ -273,6 +283,7 @@ class HttpBoardDataSource implements BoardDataSource {
       });
 
       if (!res.ok) {
+        handleAuthFailure(res);
         console.error(
           "[BoardDataSource] Сервер ответил ошибкой при публикации",
           res.status,

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { InvestigationBoard } from "./InvestigationBoard";
-import type { BoardNode, BoardEdge, BoardVersion, BoardNodeType } from "./boardTypes";
+import type { BoardNode, BoardEdge, BoardVersion, BoardNodeType, BoardAccessMode } from "./boardTypes";
 import { BOARD_NODE_TYPES } from "./boardTypes";
 import type { BoardMode } from "./components/BoardToolbar";
 import { boardDataSource } from "./boardDataSource";
@@ -12,9 +12,11 @@ interface InvestigationBoardScreenProps {
   initialEdges: BoardEdge[];
   versions: BoardVersion[];
   currentVersion: string;
+  accessMode: BoardAccessMode;
   onChangeVersion: (version: string) => void;
   onCreateVersion: (payload: { version: string; name: string; description: string }) => Promise<void>;
   onDeleteVersion: (version: string) => Promise<void>;
+  onRequestEditMode: () => void;
 }
 
 export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> = ({
@@ -23,9 +25,11 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   initialEdges,
   versions,
   currentVersion,
+  accessMode,
   onChangeVersion,
   onCreateVersion,
   onDeleteVersion,
+  onRequestEditMode,
 }) => {
   const [nodes, setNodes] = useState<BoardNode[]>(initialNodes);
   const [edges, setEdges] = useState<BoardEdge[]>(initialEdges);
@@ -43,40 +47,47 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   }, [nodes]);
 
   const selectedNode = selectedNodeId !== null ? nodesById.get(selectedNodeId) ?? null : null;
+  const isEditMode = accessMode === "edit";
 
   const resetEdgeAction = () => setEdgeActionFirstNodeId(null);
 
   const handleNodeAddClick = () => {
+    if (!isEditMode) return;
     setMode((prev) => (prev === "add-node" ? "idle" : "add-node"));
     resetEdgeAction();
     setSelectedNodeId(null);
   };
 
   const handleNodeDeleteClick = () => {
+    if (!isEditMode) return;
     setMode((prev) => (prev === "delete-node" ? "idle" : "delete-node"));
     resetEdgeAction();
     setSelectedNodeId(null);
   };
 
   const handleNodeEditClick = () => {
+    if (!isEditMode) return;
     setMode((prev) => (prev === "edit-node" ? "idle" : "edit-node"));
     resetEdgeAction();
     if (mode === "edit-node") setSelectedNodeId(null);
   };
 
   const handleEdgeAddClick = () => {
+    if (!isEditMode) return;
     setMode((prev) => (prev === "add-edge" ? "idle" : "add-edge"));
     resetEdgeAction();
     setSelectedNodeId(null);
   };
 
   const handleEdgeDeleteClick = () => {
+    if (!isEditMode) return;
     setMode((prev) => (prev === "delete-edge" ? "idle" : "delete-edge"));
     resetEdgeAction();
     setSelectedNodeId(null);
   };
 
   const handleBoardClick = (x: number, y: number) => {
+    if (!isEditMode) return;
     if (mode !== "add-node") return;
 
     const maxId = nodes.length > 0 ? nodes.reduce((m, n) => (n.node_id > m ? n.node_id : m), nodes[0].node_id) : 0;
@@ -99,6 +110,8 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   };
 
   const handleNodeClick = (node: BoardNode) => {
+    if (!isEditMode) return;
+
     if (mode === "delete-node") {
       setNodes((prev) => prev.filter((n) => n.node_id !== node.node_id));
       setEdges((prev) => prev.filter((e) => e.node1 !== node.node_id && e.node2 !== node.node_id));
@@ -163,6 +176,8 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
     id: number,
     patch: { name: string; description: string; node_type: BoardNodeType; picture_path?: string | null }
   ) => {
+    if (!isEditMode) return;
+
     setNodes((prev) =>
       prev.map((n) =>
         n.node_id === id
@@ -180,6 +195,10 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
 
   // Upload blob → {id,url}
   const handleUploadImage = (blob: Blob) => {
+    if (!isEditMode) {
+      return Promise.reject(new Error("Режим редактирования недоступен."));
+    }
+
     // filename не критичен, но пусть будет
     return fileDataSource.uploadImage(blob, "node.png");
   };
@@ -187,6 +206,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   const handleVersionChange = (version: string) => onChangeVersion(version);
 
   const handlePublish = async () => {
+    if (!isEditMode) return;
     if (isPublishing) return;
     setIsPublishing(true);
     try {
@@ -211,9 +231,11 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       selectedNode={selectedNode}
       versions={versions}
       currentVersion={currentVersion}
+      accessMode={accessMode}
       onVersionChange={handleVersionChange}
       onCreateVersion={onCreateVersion}
       onDeleteVersion={onDeleteVersion}
+      onRequestEditMode={onRequestEditMode}
       onPublish={handlePublish}
       onNodeAddClick={handleNodeAddClick}
       onNodeDeleteClick={handleNodeDeleteClick}

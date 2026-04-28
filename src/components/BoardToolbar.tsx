@@ -1,4 +1,5 @@
 import React from "react";
+import type { BoardAccessMode } from "../boardTypes";
 
 const baseButtonStyle: React.CSSProperties = {
   padding: "4px 8px",
@@ -25,6 +26,7 @@ export type BoardMode =
   | "delete-edge";
 
 interface BoardToolbarProps {
+  accessMode: BoardAccessMode;
   mode: BoardMode;
   onNodeAddClick: () => void;
   onNodeDeleteClick: () => void;
@@ -37,6 +39,7 @@ interface BoardToolbarProps {
 }
 
 export const BoardToolbar: React.FC<BoardToolbarProps> = ({
+  accessMode,
   mode,
   onNodeAddClick,
   onNodeDeleteClick,
@@ -78,6 +81,7 @@ export const BoardToolbar: React.FC<BoardToolbarProps> = ({
         userSelect: "none",
         flexWrap: "wrap",
       }}
+      data-access-mode={accessMode}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

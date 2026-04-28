@@ -1,24 +1,30 @@
 import React from "react";
-import type { BoardVersion } from "../boardTypes";
+import type { BoardVersion, BoardAccessMode } from "../boardTypes";
 
 interface InvestigationBoardHeaderProps {
   title: string;
   versions: BoardVersion[];
   currentVersion: string;
+  accessMode: BoardAccessMode;
   onVersionChange: (version: string) => void;
   onPublish: () => void;
+  onRequestEditMode: () => void;
 }
 
 export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> = ({
   title,
   versions,
   currentVersion,
+  accessMode,
   onVersionChange,
   onPublish,
+  onRequestEditMode,
 }) => {
   const handleVersionSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     onVersionChange(e.target.value);
   };
+
+  const isEditMode = accessMode === "edit";
 
   const handlePublishClick = () => {
     const ok = window.confirm(
@@ -45,27 +51,31 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
       }}
     >
       <span>{title}</span>
-      {versions.length > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-          <span style={{ opacity: 0.8 }}>Версия:</span>
-          <select
-            value={currentVersion}
-            onChange={handleVersionSelectChange}
-            style={{
-              padding: "3px 6px",
-              borderRadius: 4,
-              border: "1px solid #555",
-              backgroundColor: "#333",
-              color: "#f5f5f5",
-              fontSize: 13,
-            }}
-          >
-            {versions.map((v) => (
-              <option key={v.version} value={v.version}>
-                {v.version} — {v.name}
-              </option>
-            ))}
-          </select>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+        {versions.length > 0 && (
+          <>
+            <span style={{ opacity: 0.8 }}>Версия:</span>
+            <select
+              value={currentVersion}
+              onChange={handleVersionSelectChange}
+              style={{
+                padding: "3px 6px",
+                borderRadius: 4,
+                border: "1px solid #555",
+                backgroundColor: "#333",
+                color: "#f5f5f5",
+                fontSize: 13,
+              }}
+            >
+              {versions.map((v) => (
+                <option key={v.version} value={v.version}>
+                  {v.version} — {v.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        {isEditMode ? (
           <button
             type="button"
             onClick={handlePublishClick}
@@ -82,8 +92,25 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
           >
             Опубликовать
           </button>
-        </div>
-      )}
+        ) : (
+          <button
+            type="button"
+            onClick={onRequestEditMode}
+            style={{
+              padding: "4px 10px",
+              borderRadius: 4,
+              border: "1px solid #888",
+              backgroundColor: "#444",
+              color: "#f5f5f5",
+              fontSize: 13,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Режим редактирования
+          </button>
+        )}
+      </div>
     </div>
   );
 };

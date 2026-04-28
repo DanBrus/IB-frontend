@@ -44,15 +44,8 @@
   word-break: break-word;
 }
 
-/* ТЕТРАДНЫЙ ЛИСТ — ПОД ПОЛАРОИДОМ */
-.node-card__sheet {
-  position: relative;
-  z-index: 1;
-
-  /* Чуть уже полароида и центрируем */
-  width: calc(160px * 0.9);
-  margin: -6px auto 0; /* верхняя часть уходит под полароид */
-
+/* Общий стиль тетрадного листа */
+.notebook-sheet {
   /* Отступы: слева оставляем место под красное "поле" */
   padding-top: 8px;
   padding-right: 10px;
@@ -118,4 +111,14 @@
   min-height: 40px;
   box-sizing: border-box;
   white-space: pre-wrap;
+}
+
+/* ТЕТРАДНЫЙ ЛИСТ — ПОД ПОЛАРОИДОМ */
+.node-card__sheet {
+  position: relative;
+  z-index: 1;
+
+  /* Чуть уже полароида и центрируем */
+  width: calc(160px * 0.9);
+  margin: -6px auto 0; /* верхняя часть уходит под полароид */
 }
