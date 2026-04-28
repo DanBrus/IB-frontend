@@ -1,6 +1,6 @@
 import React from "react";
 import type { BoardNode, BoardEdge } from "../boardTypes";
-import { CARD_WIDTH, CARD_PADDING, CARD_BORDER } from "../cardLayout";
+import { getNodeAnchor } from "../cardLayout";
 
 interface EdgeLineProps {
   edge: BoardEdge;
@@ -9,19 +9,16 @@ interface EdgeLineProps {
 }
 
 export const EdgeLine: React.FC<EdgeLineProps> = ({ edge, from, to }) => {
-  const x1 = from.pos_x + CARD_WIDTH / 2;
-  const y1 = from.pos_y + CARD_BORDER + CARD_PADDING / 2;
-
-  const x2 = to.pos_x + CARD_WIDTH / 2;
-  const y2 = to.pos_y + CARD_BORDER + CARD_PADDING / 2;
+  const fromAnchor = getNodeAnchor(from);
+  const toAnchor = getNodeAnchor(to);
 
   return (
     <line
       data-edge-id={edge.edge_id}
-      x1={x1}
-      y1={y1}
-      x2={x2}
-      y2={y2}
+      x1={fromAnchor.x}
+      y1={fromAnchor.y}
+      x2={toAnchor.x}
+      y2={toAnchor.y}
       stroke="red"
       strokeWidth={2}
     />

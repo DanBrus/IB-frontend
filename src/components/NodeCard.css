@@ -10,8 +10,7 @@
   position: relative;
   z-index: 2;
 
-  /* ДОЛЖНО СОВПАДАТЬ С CARD_WIDTH из cardLayout.ts (160px) */
-  width: 160px;
+  width: var(--node-card-width, 160px);
 
   background-color: #ffffff;
   border-radius: 6px;
@@ -27,9 +26,7 @@
 /* "Фото" — чёрный квадрат-заглушка */
 .node-card__photo {
   width: 100%;
-
-  /* ДОЛЖНО СОВПАДАТЬ С CARD_WIDTH (квадрат 160x160) */
-  height: 160px;
+  height: var(--node-photo-height, 160px);
 
   border-radius: 4px;
   background-color: #000000;
@@ -42,6 +39,27 @@
   padding: 2px 4px;
   font-size: 12px;
   word-break: break-word;
+}
+
+.node-card--location .node-card__photo {
+  aspect-ratio: 9.9 / 6.2;
+}
+
+.node-card--artifact .node-card__photo {
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
+
+.node-card--note .node-card__polaroid {
+  height: var(--node-card-width, 160px);
+  align-items: center;
+  justify-content: center;
+}
+
+.node-card--note .node-card__title {
+  width: 100%;
+  padding: 8px;
+  font-size: 13px;
 }
 
 /* Общий стиль тетрадного листа */
@@ -119,6 +137,6 @@
   z-index: 1;
 
   /* Чуть уже полароида и центрируем */
-  width: calc(160px * 0.9);
+  width: calc(var(--node-card-width, 160px) * 0.9);
   margin: -6px auto 0; /* верхняя часть уходит под полароид */
 }

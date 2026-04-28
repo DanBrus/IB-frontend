@@ -1,5 +1,5 @@
 import type { BoardNode, BoardEdge, BoardVersion } from "./boardTypes";
-import { BOARD_NODE_TYPES } from "./boardTypes";
+import { normalizeNodeType } from "./boardTypes";
 import { authClient } from "./auth/authClient";
 
 export type BoardGraph = {
@@ -22,11 +22,7 @@ export interface BoardDataSource {
   }): Promise<void>;
 }
 
-// Базовый URL API — потом можно перенастроить через .env
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8001/").replace(
-  /\/$/,
-  ""
-);
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/$/, "");
 
 function getMutationHeaders(): Record<string, string> {
   return {
@@ -39,6 +35,20 @@ function handleAuthFailure(res: Response): void {
   if (res.status === 401 || res.status === 403) {
     authClient.clearToken();
   }
+}
+
+function getRawNodeType(node: unknown): unknown {
+  const record = node as Record<string, unknown>;
+  return record.node_type ?? record.nodeType ?? record.type ?? record.kind ?? record.category;
+}
+
+function normalizePicturePath(picturePath: unknown): string | null {
+  if (typeof picturePath !== "string") return null;
+
+  const value = picturePath.trim();
+  if (!value || value.toLowerCase() === "none" || value.toLowerCase() === "null") return null;
+
+  return value;
 }
 
 class HttpBoardDataSource implements BoardDataSource {
@@ -83,7 +93,8 @@ class HttpBoardDataSource implements BoardDataSource {
 
       const nodes = (data.nodes as BoardNode[]).map((n) => ({
         ...n,
-        node_type: (n as any).node_type ?? BOARD_NODE_TYPES[0],
+        node_type: normalizeNodeType(getRawNodeType(n)),
+        picture_path: normalizePicturePath((n as any).picture_path),
       }));
 
       return {

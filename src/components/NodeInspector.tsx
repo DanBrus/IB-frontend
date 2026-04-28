@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
-import { BOARD_NODE_TYPES, type BoardNode, type BoardNodeType } from "../boardTypes";
+import { BOARD_NODE_TYPES, normalizeNodeType, type BoardNode, type BoardNodeType } from "../boardTypes";
 import { FILE_RES_BASE_URL } from "../fileDataSource";
 
 type Area = { x: number; y: number; width: number; height: number };
@@ -98,7 +98,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   useEffect(() => {
     if (node) {
       setName(node.name ?? "");
-      setNodeType(node.node_type ?? BOARD_NODE_TYPES[0]);
+      setNodeType(normalizeNodeType(node.node_type));
       setDescription(node.description ?? "");
     } else {
       setName("");
