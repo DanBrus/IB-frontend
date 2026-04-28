@@ -60,7 +60,9 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose }) =
           fontSize: 13,
         }}
       >
-        {node?.description?.trim() ? node.description : "Описание отсутствует."}
+        <div style={{ transform: "translateY(-9px)", paddingBottom: 9 }}>
+          {node?.description?.trim() ? node.description : "Описание отсутствует."}
+        </div>
       </div>
     </aside>
   );
