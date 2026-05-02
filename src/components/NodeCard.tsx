@@ -6,14 +6,14 @@ import "./NodeCard.css";
 
 interface NodeCardProps {
   node: BoardNode;
-  onMouseDown?: (e: React.MouseEvent<HTMLDivElement>, node: BoardNode) => void;
+  onPointerDown?: (e: React.PointerEvent<HTMLDivElement>, node: BoardNode) => void;
   onDoubleClick?: (node: BoardNode) => void;
   showInlineDescription?: boolean;
 }
 
 export const NodeCard: React.FC<NodeCardProps> = ({
   node,
-  onMouseDown,
+  onPointerDown,
   onDoubleClick,
   showInlineDescription = true,
 }) => {
@@ -21,8 +21,8 @@ export const NodeCard: React.FC<NodeCardProps> = ({
   const [imgFailed, setImgFailed] = useState(false);
   const layout = getNodeCardLayout(node.node_type);
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    onMouseDown?.(e, node);
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    onPointerDown?.(e, node);
   };
 
   const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -66,7 +66,7 @@ export const NodeCard: React.FC<NodeCardProps> = ({
       className={`node-card ${layout.className}`}
       style={cardStyle}
       data-node-type={node.node_type}
-      onMouseDown={handleMouseDown}
+      onPointerDown={handlePointerDown}
     >
       {/* ПОЛАРОИД */}
       <div className="node-card__polaroid" onDoubleClick={handleDoubleClick}>

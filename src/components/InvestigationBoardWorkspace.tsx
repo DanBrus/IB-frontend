@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BoardMode } from "./BoardToolbar";
 import type { BoardNode, BoardEdge, BoardNodeType, BoardAccessMode } from "../boardTypes";
 import { CARD_HEIGHT, CARD_WIDTH } from "../cardLayout";
@@ -6,11 +6,16 @@ import { NodeCard } from "./NodeCard";
 import { EdgeLine } from "./EdgeLine";
 import { NodeInspector } from "./NodeInspector";
 import { NodeReadPanel } from "./NodeReadPanel";
+import { useIsMobile } from "../useIsMobile";
 
 type DragState = {
   nodeId: number;
   offsetX: number;
   offsetY: number;
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  hasMoved: boolean;
 } | null;
 
 type PendingScroll = {
@@ -19,9 +24,13 @@ type PendingScroll = {
 } | null;
 
 const CANVAS_PADDING = 120;
-const MIN_SCALE = 0.5;
+const DESKTOP_DEFAULT_SCALE = 1;
+const MOBILE_DEFAULT_SCALE = 1 / 1.75;
+const DESKTOP_MIN_SCALE = 0.5;
+const MOBILE_MIN_SCALE = DESKTOP_MIN_SCALE / 2;
 const MAX_SCALE = 2.5;
 const ZOOM_SENSITIVITY = 0.0015;
+const DRAG_ACTIVATION_DISTANCE = 8;
 
 interface InvestigationBoardWorkspaceProps {
   nodes: BoardNode[];
@@ -51,10 +60,12 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   onSelectedNodeSave,
   onUploadImage,
 }) => {
+  const isMobile = useIsMobile();
+  const minScale = isMobile ? MOBILE_MIN_SCALE : DESKTOP_MIN_SCALE;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<DragState>(null);
   const [readPanelNodeId, setReadPanelNodeId] = useState<number | null>(null);
-  const [scale, setScale] = useState(1);
+  const [scale, setScale] = useState(() => (isMobile ? MOBILE_DEFAULT_SCALE : DESKTOP_DEFAULT_SCALE));
   const pendingScrollRef = useRef<PendingScroll>(null);
 
   const nodesById = useMemo(() => {
@@ -95,6 +106,19 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
 
   const readPanelNode =
     accessMode === "read" && readPanelNodeId !== null ? nodesById.get(readPanelNodeId) ?? null : null;
+
+  useEffect(() => {
+    const nextDefaultScale = isMobile ? MOBILE_DEFAULT_SCALE : DESKTOP_DEFAULT_SCALE;
+
+    setScale((prevScale) => {
+      const isUsingDefaultScale =
+        Math.abs(prevScale - DESKTOP_DEFAULT_SCALE) < 0.0001 ||
+        Math.abs(prevScale - MOBILE_DEFAULT_SCALE) < 0.0001;
+
+      const nextScale = isUsingDefaultScale ? nextDefaultScale : prevScale;
+      return Math.min(MAX_SCALE, Math.max(minScale, nextScale));
+    });
+  }, [isMobile, minScale]);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -188,24 +212,74 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
     onBoardClick(pointer.worldX, pointer.worldY);
   };
 
-  const handleNodeMouseDown = (e: React.MouseEvent<HTMLDivElement>, node: BoardNode) => {
+  useEffect(() => {
+    if (!drag || !onNodePositionChange) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== drag.pointerId) return;
+
+      const pointer = getPointerPosition(event.clientX, event.clientY);
+      if (!pointer) return;
+
+      const hasMovedEnough =
+        drag.hasMoved ||
+        Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY) >= DRAG_ACTIVATION_DISTANCE;
+
+      if (!hasMovedEnough) return;
+
+      event.preventDefault();
+
+      if (!drag.hasMoved) {
+        setDrag((currentDrag) =>
+          currentDrag && currentDrag.pointerId === event.pointerId ? { ...currentDrag, hasMoved: true } : currentDrag
+        );
+      }
+
+      onNodePositionChange(drag.nodeId, pointer.worldX - drag.offsetX, pointer.worldY - drag.offsetY);
+    };
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      if (event.pointerId !== drag.pointerId) return;
+
+      const movedDistance = Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY);
+      const shouldOpenReadPanel =
+        accessMode === "read" && isMobile && movedDistance < DRAG_ACTIVATION_DISTANCE;
+      const nodeId = drag.nodeId;
+
+      setDrag(null);
+
+      if (shouldOpenReadPanel) {
+        setReadPanelNodeId(nodeId);
+      }
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }, [accessMode, drag, getPointerPosition, isMobile, onNodePositionChange]);
+
+  const handleNodePointerDown = (e: React.PointerEvent<HTMLDivElement>, node: BoardNode) => {
+    if (!e.isPrimary) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+
     e.preventDefault();
     e.stopPropagation();
-    const pointer = getPointerPosition(e.clientX, e.clientY);
+
     const actualNode = nodesById.get(node.node_id) ?? node;
+    const pointer = getPointerPosition(e.clientX, e.clientY);
+
     if (!pointer) return;
 
-    if (accessMode === "read") {
-      setDrag({
-        nodeId: actualNode.node_id,
-        offsetX: pointer.worldX - actualNode.pos_x,
-        offsetY: pointer.worldY - actualNode.pos_y,
-      });
-      return;
-    }
-
     if (mode !== "idle") {
-      onNodeClick(actualNode);
+      if (accessMode !== "read") {
+        onNodeClick(actualNode);
+      }
       return;
     }
 
@@ -213,19 +287,11 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
       nodeId: actualNode.node_id,
       offsetX: pointer.worldX - actualNode.pos_x,
       offsetY: pointer.worldY - actualNode.pos_y,
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      hasMoved: false,
     });
-  };
-
-  const handleBoardMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!drag || !onNodePositionChange) return;
-    const pointer = getPointerPosition(e.clientX, e.clientY);
-    if (!pointer) return;
-
-    onNodePositionChange(drag.nodeId, pointer.worldX - drag.offsetX, pointer.worldY - drag.offsetY);
-  };
-
-  const stopDragging = () => {
-    if (drag) setDrag(null);
   };
 
   const handleNodeDoubleClick = (node: BoardNode) => {
@@ -249,7 +315,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
 
     const zoomFactor = Math.exp(-e.deltaY * ZOOM_SENSITIVITY);
     const unclampedScale = scale * zoomFactor;
-    const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, unclampedScale));
+    const nextScale = Math.min(MAX_SCALE, Math.max(minScale, unclampedScale));
 
     if (Math.abs(nextScale - scale) < 0.0001) return;
 
@@ -288,9 +354,6 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
         }}
         onWheel={handleViewportWheel}
         onClick={handleBoardClick}
-        onMouseMove={handleBoardMouseMove}
-        onMouseUp={stopDragging}
-        onMouseLeave={stopDragging}
       >
         <div
           style={{
@@ -320,7 +383,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
                   pos_x: node.pos_x + boardBounds.canvasLeft,
                   pos_y: node.pos_y + boardBounds.canvasTop,
                 }}
-                onMouseDown={handleNodeMouseDown}
+                onPointerDown={handleNodePointerDown}
                 onDoubleClick={handleNodeDoubleClick}
                 showInlineDescription={accessMode === "edit"}
               />
@@ -354,7 +417,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
       )}
 
       {accessMode === "read" && readPanelNodeId !== null && (
-        <NodeReadPanel node={readPanelNode} onClose={handleReadPanelClose} />
+        <NodeReadPanel node={readPanelNode} onClose={handleReadPanelClose} mobile={isMobile} />
       )}
     </div>
   );
