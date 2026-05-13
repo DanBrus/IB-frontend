@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { InvestigationBoard } from "./InvestigationBoard";
 import type { BoardNode, BoardEdge, BoardVersion, BoardNodeType, BoardAccessMode } from "./boardTypes";
 import { BOARD_NODE_TYPES } from "./boardTypes";
@@ -14,8 +14,14 @@ interface InvestigationBoardScreenProps {
   currentVersion: string;
   accessMode: BoardAccessMode;
   onChangeVersion: (version: string) => void;
-  onCreateVersion: (payload: { version: string; name: string; description: string }) => Promise<void>;
+  onCreateVersion: (payload: {
+    version: string;
+    name: string;
+    description: string;
+    is_published?: boolean | null;
+  }) => Promise<void>;
   onDeleteVersion: (version: string) => Promise<void>;
+  onCurrentVersionPublicationChange: (version: string, isPublished: boolean) => void;
   onRequestEditMode: () => void;
 }
 
@@ -29,6 +35,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   onChangeVersion,
   onCreateVersion,
   onDeleteVersion,
+  onCurrentVersionPublicationChange,
   onRequestEditMode,
 }) => {
   const [nodes, setNodes] = useState<BoardNode[]>(initialNodes);
@@ -39,12 +46,18 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
 
   const [isPublishing, setIsPublishing] = useState(false);
+  const initialIsPublished = versions.find((version) => version.version === currentVersion)?.is_published ?? false;
+  const [isPublished, setIsPublished] = useState(Boolean(initialIsPublished));
 
   const nodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
     nodes.forEach((n) => map.set(n.node_id, n));
     return map;
   }, [nodes]);
+
+  useEffect(() => {
+    setIsPublished(Boolean(initialIsPublished));
+  }, [currentVersion, initialIsPublished]);
 
   const selectedNode = selectedNodeId !== null ? nodesById.get(selectedNodeId) ?? null : null;
   const isEditMode = accessMode === "edit";
@@ -216,7 +229,9 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
         edges,
         description: null,
         board_name: null,
+        is_published: isPublished,
       });
+      onCurrentVersionPublicationChange(currentVersion, isPublished);
     } finally {
       setIsPublishing(false);
     }
@@ -231,12 +246,14 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       selectedNode={selectedNode}
       versions={versions}
       currentVersion={currentVersion}
+      currentVersionIsPublished={isPublished}
       accessMode={accessMode}
       onVersionChange={handleVersionChange}
       onCreateVersion={onCreateVersion}
       onDeleteVersion={onDeleteVersion}
       onRequestEditMode={onRequestEditMode}
       onPublish={handlePublish}
+      onCurrentVersionPublishedChange={setIsPublished}
       onNodeAddClick={handleNodeAddClick}
       onNodeDeleteClick={handleNodeDeleteClick}
       onNodeEditClick={handleNodeEditClick}

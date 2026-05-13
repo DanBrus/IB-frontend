@@ -7,6 +7,29 @@ import { authClient } from "./auth/authClient";
 
 const AUTH_REJECTED_MESSAGE = "Токен безопасности истёк или был введён неверный код безопасности.";
 
+function isVersionVisible(version: BoardVersion, accessMode: BoardAccessMode): boolean {
+  return accessMode === "edit" || version.is_published !== false;
+}
+
+function getVisibleVersions(versions: BoardVersion[], accessMode: BoardAccessMode): BoardVersion[] {
+  return versions.filter((version) => isVersionVisible(version, accessMode));
+}
+
+function resolveCurrentVersion(
+  versions: BoardVersion[],
+  requestedVersion: string | null | undefined,
+  accessMode: BoardAccessMode
+): string | null {
+  const visibleVersions = getVisibleVersions(versions, accessMode);
+
+  if (visibleVersions.length === 0) return null;
+  if (requestedVersion && visibleVersions.some((version) => version.version === requestedVersion)) {
+    return requestedVersion;
+  }
+
+  return visibleVersions[0]?.version ?? null;
+}
+
 export default function App() {
   const [nodes, setNodes] = useState<BoardNode[]>([]);
   const [edges, setEdges] = useState<BoardEdge[]>([]);
@@ -38,12 +61,20 @@ export default function App() {
 
         if (cancelled) return;
 
+        const initialVersion = resolveCurrentVersion(versionsList, activeVersion, "read");
         setVersions(versionsList);
-        setCurrentVersion(activeVersion);
+        setCurrentVersion(initialVersion);
+
+        if (!initialVersion) {
+          setNodes([]);
+          setEdges([]);
+          setLoading(false);
+          return;
+        }
 
         const graph = await boardDataSource.getCurrentBoard(
           boardId,
-          activeVersion
+          initialVersion
         );
         if (cancelled) return;
 
@@ -64,14 +95,17 @@ export default function App() {
 
   const handleChangeVersion = async (version: string) => {
     const boardId = "demo-board";
+    const nextVersion = resolveCurrentVersion(versions, version, accessMode);
+    if (!nextVersion || nextVersion !== version) return;
+
     setLoading(true);
     setError(null);
 
     try {
-      const graph = await boardDataSource.getCurrentBoard(boardId, version);
+      const graph = await boardDataSource.getCurrentBoard(boardId, nextVersion);
       setNodes(graph.nodes);
       setEdges(graph.edges);
-      setCurrentVersion(version);
+      setCurrentVersion(nextVersion);
       setLoading(false);
     } catch {
       setError("Не удалось загрузить выбранную версию доски");
@@ -79,7 +113,12 @@ export default function App() {
     }
   };
 
-  const handleCreateVersion = async (payload: { version: string; name: string; description: string }) => {
+  const handleCreateVersion = async (payload: {
+    version: string;
+    name: string;
+    description: string;
+    is_published?: boolean | null;
+  }) => {
     if (accessMode !== "edit") {
       throw new Error("Режим редактирования недоступен.");
     }
@@ -103,6 +142,19 @@ export default function App() {
       setError("Не удалось создать новую версию доски");
       setLoading(false);
     }
+  };
+
+  const handleCurrentVersionPublicationChange = (version: string, isPublished: boolean) => {
+    setVersions((prev) =>
+      prev.map((item) =>
+        item.version === version
+          ? {
+              ...item,
+              is_published: isPublished,
+            }
+          : item
+      )
+    );
   };
 
   const handleDeleteVersion = async (version: string) => {
@@ -222,9 +274,11 @@ export default function App() {
     }
   };
 
+  const visibleVersions = getVisibleVersions(versions, accessMode);
+
   if (loading) return <div>Загружаем доску…</div>;
   if (error) return <div>{error}</div>;
-  if (!currentVersion) return <div>Не удалось определить активную версию</div>;
+  if (!currentVersion) return <div>Нет опубликованных досок для режима просмотра.</div>;
 
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
@@ -233,12 +287,13 @@ export default function App() {
         title="Доска расследований"
         initialNodes={nodes}
         initialEdges={edges}
-        versions={versions}
+        versions={visibleVersions}
         currentVersion={currentVersion}
         accessMode={accessMode}
         onChangeVersion={handleChangeVersion}
         onCreateVersion={handleCreateVersion}
         onDeleteVersion={handleDeleteVersion}
+        onCurrentVersionPublicationChange={handleCurrentVersionPublicationChange}
         onRequestEditMode={handleRequestEditMode}
       />
 

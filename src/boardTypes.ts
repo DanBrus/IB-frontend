@@ -59,4 +59,5 @@ export type BoardVersion = {
   version: string;
   name: string;
   description: string;
+  is_published?: boolean | null;
 };

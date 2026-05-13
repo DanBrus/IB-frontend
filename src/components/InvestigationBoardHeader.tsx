@@ -32,8 +32,8 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
 
   const handlePublishClick = () => {
     const ok = window.confirm(
-      "Вы действительно хотите опубликовать эту версию доски?\n" +
-        "Действие необратимо: данные текущей версии будут перезаписаны."
+      "Сохранить изменения текущей версии доски?\n" +
+        "Будут обновлены данные графа и текущее состояние общедоступности."
     );
     if (ok) onPublish();
   };
@@ -130,7 +130,7 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
                 whiteSpace: "nowrap",
               }}
             >
-              Опубликовать
+              Сохранить
             </button>
           ) : (
             !isMobile && (

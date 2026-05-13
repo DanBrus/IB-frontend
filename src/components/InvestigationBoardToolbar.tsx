@@ -6,11 +6,13 @@ import type { BoardAccessMode } from "../boardTypes";
 interface InvestigationBoardToolbarProps {
   accessMode: BoardAccessMode;
   mode: BoardMode;
+  currentVersionIsPublished: boolean;
   onNodeAddClick: () => void;
   onNodeDeleteClick: () => void;
   onNodeEditClick: () => void;
   onEdgeAddClick: () => void;
   onEdgeDeleteClick: () => void;
+  onCurrentVersionPublishedChange: (value: boolean) => void;
   onNewVersionClick: () => void;
   onDeleteVersionClick: () => void;
   canDeleteVersion: boolean;

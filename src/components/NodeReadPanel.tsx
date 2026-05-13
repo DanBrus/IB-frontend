@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { BoardNode } from "../boardTypes";
 import "./NodeCard.css";
+import {
+  clampReadPanelWidth,
+  DESKTOP_READ_PANEL_DEFAULT_WIDTH,
+} from "./panelSizing";
 
 type MobileSheetState = "half" | "full";
 type DesktopResizeState = {
@@ -17,19 +21,6 @@ interface NodeReadPanelProps {
 
 const MOBILE_DRAG_CLOSE_THRESHOLD = 96;
 const MOBILE_DRAG_EXPAND_THRESHOLD = 72;
-const DESKTOP_PANEL_DEFAULT_WIDTH = 540;
-const DESKTOP_PANEL_MIN_WIDTH = 360;
-const DESKTOP_PANEL_MAX_WIDTH = 960;
-
-function clampDesktopPanelWidth(width: number) {
-  const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
-  const maxWidth = Math.max(
-    DESKTOP_PANEL_MIN_WIDTH,
-    Math.min(DESKTOP_PANEL_MAX_WIDTH, viewportWidth - 120)
-  );
-
-  return Math.min(maxWidth, Math.max(DESKTOP_PANEL_MIN_WIDTH, width));
-}
 
 export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose, mobile = false }) => {
   const [sheetState, setSheetState] = useState<MobileSheetState>("half");
@@ -37,7 +28,7 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose, mob
   const [dragStartY, setDragStartY] = useState(0);
   const [dragOffsetY, setDragOffsetY] = useState(0);
   const [dragStartState, setDragStartState] = useState<MobileSheetState>("half");
-  const [desktopWidth, setDesktopWidth] = useState(() => clampDesktopPanelWidth(DESKTOP_PANEL_DEFAULT_WIDTH));
+  const [desktopWidth, setDesktopWidth] = useState(() => clampReadPanelWidth(DESKTOP_READ_PANEL_DEFAULT_WIDTH));
   const [desktopResizeState, setDesktopResizeState] = useState<DesktopResizeState>(null);
 
   useEffect(() => {
@@ -50,7 +41,7 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose, mob
     if (mobile) return;
 
     const handleWindowResize = () => {
-      setDesktopWidth((prevWidth) => clampDesktopPanelWidth(prevWidth));
+      setDesktopWidth((prevWidth) => clampReadPanelWidth(prevWidth));
     };
 
     window.addEventListener("resize", handleWindowResize);
@@ -122,7 +113,7 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose, mob
       event.preventDefault();
 
       const nextWidth = desktopResizeState.startWidth - (event.clientX - desktopResizeState.startX);
-      setDesktopWidth(clampDesktopPanelWidth(nextWidth));
+      setDesktopWidth(clampReadPanelWidth(nextWidth));
     };
 
     const handlePointerEnd = (event: PointerEvent) => {

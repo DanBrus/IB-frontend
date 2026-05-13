@@ -14,13 +14,20 @@ interface InvestigationBoardProps {
 
   versions: BoardVersion[];
   currentVersion: string;
+  currentVersionIsPublished: boolean;
   accessMode: BoardAccessMode;
   onVersionChange: (version: string) => void;
-  onCreateVersion: (payload: { version: string; name: string; description: string }) => Promise<void>;
+  onCreateVersion: (payload: {
+    version: string;
+    name: string;
+    description: string;
+    is_published?: boolean | null;
+  }) => Promise<void>;
   onDeleteVersion: (version: string) => Promise<void>;
   onRequestEditMode: () => void;
 
   onPublish: () => void;
+  onCurrentVersionPublishedChange: (value: boolean) => void;
 
   onNodeAddClick: () => void;
   onNodeDeleteClick: () => void;
@@ -48,12 +55,14 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   selectedNode,
   versions,
   currentVersion,
+  currentVersionIsPublished,
   accessMode,
   onVersionChange,
   onCreateVersion,
   onDeleteVersion,
   onRequestEditMode,
   onPublish,
+  onCurrentVersionPublishedChange,
   onNodeAddClick,
   onNodeDeleteClick,
   onNodeEditClick,
@@ -109,7 +118,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
     setNewVersionError(null);
     setNewVersionSaving(true);
     try {
-      await onCreateVersion({ version, name, description });
+      await onCreateVersion({ version, name, description, is_published: false });
       setNewVersionOpen(false);
     } catch (e: any) {
       setNewVersionError(e?.message ? String(e.message) : "Не удалось создать версию.");
@@ -171,11 +180,13 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         <InvestigationBoardToolbar
           accessMode={accessMode}
           mode={mode}
+          currentVersionIsPublished={currentVersionIsPublished}
           onNodeAddClick={onNodeAddClick}
           onNodeDeleteClick={onNodeDeleteClick}
           onNodeEditClick={onNodeEditClick}
           onEdgeAddClick={onEdgeAddClick}
           onEdgeDeleteClick={onEdgeDeleteClick}
+          onCurrentVersionPublishedChange={onCurrentVersionPublishedChange}
           onNewVersionClick={openNewVersionDialog}
           onDeleteVersionClick={openDeleteVersionDialog}
           canDeleteVersion={versions.length > 0}

@@ -28,11 +28,13 @@ export type BoardMode =
 interface BoardToolbarProps {
   accessMode: BoardAccessMode;
   mode: BoardMode;
+  currentVersionIsPublished: boolean;
   onNodeAddClick: () => void;
   onNodeDeleteClick: () => void;
   onNodeEditClick: () => void;
   onEdgeAddClick: () => void;
   onEdgeDeleteClick: () => void;
+  onCurrentVersionPublishedChange: (value: boolean) => void;
   onNewVersionClick: () => void;
   onDeleteVersionClick: () => void;
   canDeleteVersion: boolean;
@@ -41,11 +43,13 @@ interface BoardToolbarProps {
 export const BoardToolbar: React.FC<BoardToolbarProps> = ({
   accessMode,
   mode,
+  currentVersionIsPublished,
   onNodeAddClick,
   onNodeDeleteClick,
   onNodeEditClick,
   onEdgeAddClick,
   onEdgeDeleteClick,
+  onCurrentVersionPublishedChange,
   onNewVersionClick,
   onDeleteVersionClick,
   canDeleteVersion,
@@ -132,6 +136,14 @@ export const BoardToolbar: React.FC<BoardToolbarProps> = ({
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={currentVersionIsPublished}
+            onChange={(e) => onCurrentVersionPublishedChange(e.target.checked)}
+          />
+          <span>Общедоступно</span>
+        </label>
         <button
           type="button"
           style={versionButtonStyle}

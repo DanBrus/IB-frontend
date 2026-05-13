@@ -5,13 +5,22 @@ import { authClient } from "./auth/authClient";
 export type BoardGraph = {
   nodes: BoardNode[];
   edges: BoardEdge[];
+  version?: string | null;
+  description?: string | null;
+  board_name?: string | null;
+  is_published?: boolean | null;
 };
 
 export interface BoardDataSource {
   getCurrentBoard(boardId: string, version?: string): Promise<BoardGraph>;
   getVersions(boardId: string): Promise<BoardVersion[]>;
   getActiveVersion(boardId: string): Promise<string>;
-  createVersion(payload: { version: string; name: string; description: string }): Promise<void>;
+  createVersion(payload: {
+    version: string;
+    name: string;
+    description: string;
+    is_published?: boolean | null;
+  }): Promise<void>;
   deleteVersion(payload: { version: string }): Promise<void>;
   updateBoard(payload: {
     version: string;
@@ -19,6 +28,7 @@ export interface BoardDataSource {
     edges: BoardEdge[];
     description?: string | null;
     board_name?: string | null;
+    is_published?: boolean | null;
   }): Promise<void>;
 }
 
@@ -49,6 +59,10 @@ function normalizePicturePath(picturePath: unknown): string | null {
   if (!value || value.toLowerCase() === "none" || value.toLowerCase() === "null") return null;
 
   return value;
+}
+
+function normalizePublishedFlag(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 class HttpBoardDataSource implements BoardDataSource {
@@ -100,6 +114,10 @@ class HttpBoardDataSource implements BoardDataSource {
       return {
         nodes,
         edges: data.edges as BoardEdge[],
+        version: typeof data.version === "string" ? data.version : version ?? null,
+        description: typeof data.description === "string" ? data.description : null,
+        board_name: typeof data.board_name === "string" ? data.board_name : null,
+        is_published: normalizePublishedFlag((data as Record<string, unknown>).is_published),
       };
     } catch (error) {
       console.error(
@@ -137,10 +155,15 @@ class HttpBoardDataSource implements BoardDataSource {
         );
       }
 
-      const data = (await res.json()) as BoardVersion[];
+      const data = (await res.json()) as Array<Record<string, unknown>>;
 
       console.log("[BoardDataSource] Список версий получен", data);
-      return data;
+      return data.map((version) => ({
+        version: typeof version.version === "string" ? version.version : "",
+        name: typeof version.name === "string" ? version.name : "",
+        description: typeof version.description === "string" ? version.description : "",
+        is_published: normalizePublishedFlag(version.is_published),
+      }));
     } catch (error) {
       console.error(
         "[BoardDataSource] Ошибка при запросе версий доски",
@@ -194,6 +217,7 @@ class HttpBoardDataSource implements BoardDataSource {
     version: string;
     name: string;
     description: string;
+    is_published?: boolean | null;
   }): Promise<void> {
     const url = `${API_BASE_URL}/graph/versions`;
 
@@ -270,6 +294,7 @@ class HttpBoardDataSource implements BoardDataSource {
     edges: BoardEdge[];
     description?: string | null;
     board_name?: string | null;
+    is_published?: boolean | null;
   }): Promise<void> {
     const url = `${API_BASE_URL}/graph/board`;
 
@@ -290,6 +315,8 @@ class HttpBoardDataSource implements BoardDataSource {
             payload.description !== undefined ? payload.description : null,
           board_name:
             payload.board_name !== undefined ? payload.board_name : null,
+          is_published:
+            payload.is_published !== undefined ? payload.is_published : null,
         }),
       });
 

@@ -2,8 +2,17 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
 import { BOARD_NODE_TYPES, normalizeNodeType, type BoardNode, type BoardNodeType } from "../boardTypes";
 import { FILE_RES_BASE_URL } from "../fileDataSource";
+import {
+  clampInspectorPanelWidth,
+  DESKTOP_INSPECTOR_PANEL_DEFAULT_WIDTH,
+} from "./panelSizing";
 
 type Area = { x: number; y: number; width: number; height: number };
+type DesktopResizeState = {
+  pointerId: number;
+  startX: number;
+  startWidth: number;
+} | null;
 
 interface NodeInspectorProps {
   node: BoardNode | null;
@@ -86,6 +95,10 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [desktopWidth, setDesktopWidth] = useState(() =>
+    clampInspectorPanelWidth(DESKTOP_INSPECTOR_PANEL_DEFAULT_WIDTH)
+  );
+  const [desktopResizeState, setDesktopResizeState] = useState<DesktopResizeState>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -120,7 +133,62 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node?.node_id]);
 
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setDesktopWidth((prevWidth) => clampInspectorPanelWidth(prevWidth));
+    };
+
+    window.addEventListener("resize", handleWindowResize);
+    return () => window.removeEventListener("resize", handleWindowResize);
+  }, []);
+
+  useEffect(() => {
+    if (!desktopResizeState) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== desktopResizeState.pointerId) return;
+
+      event.preventDefault();
+
+      const nextWidth = desktopResizeState.startWidth - (event.clientX - desktopResizeState.startX);
+      setDesktopWidth(clampInspectorPanelWidth(nextWidth));
+    };
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      if (event.pointerId !== desktopResizeState.pointerId) return;
+      setDesktopResizeState(null);
+    };
+
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+
+    return () => {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }, [desktopResizeState]);
+
   const disabled = !node || saving;
+
+  const handleDesktopResizePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary || event.button !== 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    setDesktopResizeState({
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: desktopWidth,
+    });
+  };
 
   const openFileDialog = () => {
     fileInputRef.current?.click();
@@ -223,262 +291,301 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   return (
     <div
       style={{
-        width: 360,
+        position: "relative",
+        width: desktopWidth,
         borderLeft: "1px solid #ddd",
         backgroundColor: "#fafafa",
         padding: "10px 14px",
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
-        gap: 10,
+        minHeight: 0,
+        overflow: "hidden",
       }}
     >
-      <div style={{ fontWeight: 700, fontSize: 14 }}>Инспектор узла</div>
-
-      {!node && (
-        <div style={{ fontSize: 13, opacity: 0.6 }}>
-          Нажмите «Редактировать» и выберите узел на доске.
-        </div>
-      )}
-
-      {error && (
-        <div style={{ fontSize: 12, color: "#b00020", whiteSpace: "pre-wrap" }}>
-          {error}
-        </div>
-      )}
-
-      {/* Имя */}
-      <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
-        Имя (до 64 символов)
-        <input
-          type="text"
-          value={name}
-          maxLength={MAX_NAME_LEN}
-          disabled={disabled}
-          onChange={(e) => setName(e.target.value)}
-          style={{
-            width: "100%",
-            marginTop: 4,
-            padding: "6px 8px",
-            fontSize: 13,
-            borderRadius: 6,
-            border: "1px solid #ccc",
-            boxSizing: "border-box",
-          }}
-        />
-      </label>
-
-      {/* Тип */}
-      <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
-        Тип узла
-        <select
-          value={nodeType}
-          disabled={disabled}
-          onChange={(e) => setNodeType(e.target.value as BoardNodeType)}
-          style={{
-            width: "100%",
-            marginTop: 4,
-            padding: "6px 8px",
-            fontSize: 13,
-            borderRadius: 6,
-            border: "1px solid #ccc",
-            boxSizing: "border-box",
-            backgroundColor: disabled ? "#f2f2f2" : "#fff",
-          }}
-        >
-          {BOARD_NODE_TYPES.map((type) => (
-            <option key={type} value={type}>
-              {type}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      {/* Описание */}
-      <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
-        Описание
-        <textarea
-          value={description}
-          disabled={disabled}
-          onChange={(e) => setDescription(e.target.value)}
-          rows={6}
-          style={{
-            width: "100%",
-            marginTop: 4,
-            padding: "6px 8px",
-            fontSize: 13,
-            borderRadius: 6,
-            border: "1px solid #ccc",
-            boxSizing: "border-box",
-            resize: "vertical",
-          }}
-        />
-      </label>
-
-      {/* Картинка */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, opacity: disabled ? 0.6 : 0.9 }}>
-          Картинка (PNG/JPEG) — кроп 1:1, 512×512
-        </div>
-
-        {/* текущая/превью */}
+      <div
+        onPointerDown={handleDesktopResizePointerDown}
+        style={{
+          position: "absolute",
+          left: -4,
+          top: 0,
+          bottom: 0,
+          width: 12,
+          cursor: "col-resize",
+          zIndex: 2,
+        }}
+        aria-hidden="true"
+      >
         <div
           style={{
-            width: "100%",
-            aspectRatio: "1 / 1",
-            borderRadius: 8,
-            backgroundColor: "#000",
-            overflow: "hidden",
-            position: "relative",
-            border: "1px solid #ddd",
+            position: "absolute",
+            left: 5,
+            top: 0,
+            bottom: 0,
+            width: 2,
+            backgroundColor: "rgba(0, 0, 0, 0.08)",
           }}
-        >
-          {previewUrl ? (
-            <img
-              src={previewUrl}
-              alt=""
-              draggable={false}
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
-          ) : currentImgUrl ? (
-            <img
-              src={currentImgUrl}
-              alt=""
-              draggable={false}
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
-          ) : null}
-        </div>
-
-        {/* drop zone */}
-        <div
-          onDragOver={onDragOver}
-          onDrop={onDrop}
-          style={{
-            padding: "10px 10px",
-            borderRadius: 8,
-            border: "1px dashed #999",
-            backgroundColor: "#fff",
-            fontSize: 12,
-            opacity: disabled ? 0.6 : 1,
-          }}
-        >
-          Перетащите PNG/JPEG сюда или{" "}
-          <button
-            type="button"
-            onClick={openFileDialog}
-            disabled={disabled}
-            style={{
-              border: "none",
-              background: "none",
-              padding: 0,
-              color: "#0b57d0",
-              textDecoration: "underline",
-              cursor: disabled ? "default" : "pointer",
-              fontSize: 12,
-            }}
-          >
-            выберите файл
-          </button>
-          .
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg"
-            style={{ display: "none" }}
-            onChange={onPickFile}
-          />
-        </div>
-
-        {/* crop UI when file selected */}
-        {imageSrcForCrop && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div
-              style={{
-                position: "relative",
-                width: "100%",
-                height: 220,
-                background: "#111",
-                borderRadius: 8,
-                overflow: "hidden",
-                border: "1px solid #ddd",
-              }}
-            >
-              <Cropper
-                image={imageSrcForCrop}
-                crop={crop}
-                zoom={zoom}
-                aspect={1}
-                onCropChange={setCrop}
-                onZoomChange={setZoom}
-                onCropComplete={onCropComplete}
-              />
-            </div>
-
-            <label style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-              Zoom
-              <input
-                type="range"
-                min={1}
-                max={3}
-                step={0.01}
-                value={zoom}
-                disabled={disabled}
-                onChange={(e) => setZoom(Number(e.target.value))}
-                style={{ flexGrow: 1 }}
-              />
-            </label>
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                type="button"
-                onClick={applyCrop}
-                disabled={disabled || !croppedAreaPixels}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  border: "1px solid #555",
-                  backgroundColor: "#333",
-                  color: "#fff",
-                  cursor: disabled ? "default" : "pointer",
-                  fontSize: 13,
-                }}
-              >
-                Применить обрезку
-              </button>
-              <div style={{ fontSize: 12, opacity: 0.6, alignSelf: "center" }}>
-                {pickedFileName}
-              </div>
-            </div>
-
-            {!croppedBlob && (
-              <div style={{ fontSize: 12, opacity: 0.6 }}>
-                Чтобы сохранить, нажмите «Применить обрезку».
-              </div>
-            )}
-          </div>
-        )}
+        />
       </div>
 
-      {/* save */}
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={!node || saving}
+      <div
         style={{
-          marginTop: 4,
-          alignSelf: "flex-start",
-          padding: "6px 12px",
-          fontSize: 13,
-          borderRadius: 6,
-          border: "1px solid #555",
-          backgroundColor: !node || saving ? "#ddd" : "#333",
-          color: !node || saving ? "#777" : "#f5f5f5",
-          cursor: !node || saving ? "default" : "pointer",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+          flexGrow: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          paddingRight: 2,
         }}
       >
-        {saving ? "Сохраняю…" : "Сохранить"}
-      </button>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Инспектор узла</div>
+
+        {!node && (
+          <div style={{ fontSize: 13, opacity: 0.6 }}>
+            Нажмите «Редактировать» и выберите узел на доске.
+          </div>
+        )}
+
+        {error && (
+          <div style={{ fontSize: 12, color: "#b00020", whiteSpace: "pre-wrap" }}>
+            {error}
+          </div>
+        )}
+
+        {/* Имя */}
+        <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
+          Имя (до 64 символов)
+          <input
+            type="text"
+            value={name}
+            maxLength={MAX_NAME_LEN}
+            disabled={disabled}
+            onChange={(e) => setName(e.target.value)}
+            style={{
+              width: "100%",
+              marginTop: 4,
+              padding: "6px 8px",
+              fontSize: 13,
+              borderRadius: 6,
+              border: "1px solid #ccc",
+              boxSizing: "border-box",
+            }}
+          />
+        </label>
+
+        {/* Тип */}
+        <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
+          Тип узла
+          <select
+            value={nodeType}
+            disabled={disabled}
+            onChange={(e) => setNodeType(e.target.value as BoardNodeType)}
+            style={{
+              width: "100%",
+              marginTop: 4,
+              padding: "6px 8px",
+              fontSize: 13,
+              borderRadius: 6,
+              border: "1px solid #ccc",
+              boxSizing: "border-box",
+              backgroundColor: disabled ? "#f2f2f2" : "#fff",
+            }}
+          >
+            {BOARD_NODE_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {/* Описание */}
+        <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
+          Описание
+          <textarea
+            value={description}
+            disabled={disabled}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={6}
+            style={{
+              width: "100%",
+              marginTop: 4,
+              padding: "6px 8px",
+              fontSize: 13,
+              borderRadius: 6,
+              border: "1px solid #ccc",
+              boxSizing: "border-box",
+              resize: "vertical",
+            }}
+          />
+        </label>
+
+        {/* Картинка */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, opacity: disabled ? 0.6 : 0.9 }}>
+            Картинка (PNG/JPEG) — кроп 1:1, 512×512
+          </div>
+
+          {/* текущая/превью */}
+          <div
+            style={{
+              width: "100%",
+              aspectRatio: "1 / 1",
+              borderRadius: 8,
+              backgroundColor: "#000",
+              overflow: "hidden",
+              position: "relative",
+              border: "1px solid #ddd",
+            }}
+          >
+            {previewUrl ? (
+              <img
+                src={previewUrl}
+                alt=""
+                draggable={false}
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            ) : currentImgUrl ? (
+              <img
+                src={currentImgUrl}
+                alt=""
+                draggable={false}
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            ) : null}
+          </div>
+
+          {/* drop zone */}
+          <div
+            onDragOver={onDragOver}
+            onDrop={onDrop}
+            style={{
+              padding: "10px 10px",
+              borderRadius: 8,
+              border: "1px dashed #999",
+              backgroundColor: "#fff",
+              fontSize: 12,
+              opacity: disabled ? 0.6 : 1,
+            }}
+          >
+            Перетащите PNG/JPEG сюда или{" "}
+            <button
+              type="button"
+              onClick={openFileDialog}
+              disabled={disabled}
+              style={{
+                border: "none",
+                background: "none",
+                padding: 0,
+                color: "#0b57d0",
+                textDecoration: "underline",
+                cursor: disabled ? "default" : "pointer",
+                fontSize: 12,
+              }}
+            >
+              выберите файл
+            </button>
+            .
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg"
+              style={{ display: "none" }}
+              onChange={onPickFile}
+            />
+          </div>
+
+          {/* crop UI when file selected */}
+          {imageSrcForCrop && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div
+                style={{
+                  position: "relative",
+                  width: "100%",
+                  height: 220,
+                  background: "#111",
+                  borderRadius: 8,
+                  overflow: "hidden",
+                  border: "1px solid #ddd",
+                }}
+              >
+                <Cropper
+                  image={imageSrcForCrop}
+                  crop={crop}
+                  zoom={zoom}
+                  aspect={1}
+                  onCropChange={setCrop}
+                  onZoomChange={setZoom}
+                  onCropComplete={onCropComplete}
+                />
+              </div>
+
+              <label style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
+                Zoom
+                <input
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.01}
+                  value={zoom}
+                  disabled={disabled}
+                  onChange={(e) => setZoom(Number(e.target.value))}
+                  style={{ flexGrow: 1 }}
+                />
+              </label>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={applyCrop}
+                  disabled={disabled || !croppedAreaPixels}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    border: "1px solid #555",
+                    backgroundColor: "#333",
+                    color: "#fff",
+                    cursor: disabled ? "default" : "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Применить обрезку
+                </button>
+                <div style={{ fontSize: 12, opacity: 0.6, alignSelf: "center" }}>
+                  {pickedFileName}
+                </div>
+              </div>
+
+              {!croppedBlob && (
+                <div style={{ fontSize: 12, opacity: 0.6 }}>
+                  Чтобы сохранить, нажмите «Применить обрезку».
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* save */}
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!node || saving}
+          style={{
+            marginTop: 4,
+            alignSelf: "flex-start",
+            padding: "6px 12px",
+            fontSize: 13,
+            borderRadius: 6,
+            border: "1px solid #555",
+            backgroundColor: !node || saving ? "#ddd" : "#333",
+            color: !node || saving ? "#777" : "#f5f5f5",
+            cursor: !node || saving ? "default" : "pointer",
+          }}
+        >
+          {saving ? "Сохраняю…" : "Сохранить"}
+        </button>
+      </div>
     </div>
   );
 };
