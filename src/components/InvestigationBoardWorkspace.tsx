@@ -2,7 +2,12 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "re
 import type { BoardMode } from "./BoardToolbar";
 import type { EditableBoardDescriptionSheet } from "../boardDescription";
 import { buildNodeDescriptionSheets, getConnectedNodes } from "../boardDescription";
-import type { BoardAccessMode, BoardEdge, BoardNode, BoardNodeType } from "../boardTypes";
+import type {
+  BoardAccessMode,
+  BoardEdge,
+  BoardNode,
+  CanonicalEntity,
+} from "../boardTypes";
 import { CARD_HEIGHT, CARD_WIDTH } from "../cardLayout";
 import { NodeCard } from "./NodeCard";
 import { EdgeLine } from "./EdgeLine";
@@ -37,6 +42,7 @@ const DRAG_ACTIVATION_DISTANCE = 8;
 interface InvestigationBoardWorkspaceProps {
   nodes: BoardNode[];
   edges: BoardEdge[];
+  canonicalEntities: CanonicalEntity[];
   mode: BoardMode;
   selectedNode: BoardNode | null;
   accessMode: BoardAccessMode;
@@ -46,9 +52,8 @@ interface InvestigationBoardWorkspaceProps {
   onSelectedNodeSave: (
     id: number,
     patch: {
-      name: string;
+      CE_id: string;
       descriptionSheets: EditableBoardDescriptionSheet[];
-      node_type: BoardNodeType;
     }
   ) => Promise<void>;
 }
@@ -56,6 +61,7 @@ interface InvestigationBoardWorkspaceProps {
 export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspaceProps> = ({
   nodes,
   edges,
+  canonicalEntities,
   mode,
   selectedNode,
   accessMode,
@@ -435,6 +441,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
       {accessMode === "edit" && mode === "edit-node" && (
         <NodeInspector
           node={selectedNode}
+          canonicalEntities={canonicalEntities}
           descriptionSheets={selectedNodeSheets}
           connectedNodes={connectedNodes}
           onSaveNode={onSelectedNodeSave}

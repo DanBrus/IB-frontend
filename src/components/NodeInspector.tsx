@@ -1,17 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  BOARD_NODE_TYPES,
-  normalizeNodeType,
-  type BoardNode,
-  type BoardNodeType,
-} from "../boardTypes";
-import type { BoardDescriptionSheet, EditableBoardDescriptionSheet } from "../boardDescription";
+import type { BoardNode, CanonicalEntity } from "../boardTypes";
+import type {
+  BoardDescriptionSheet,
+  EditableBoardDescriptionSheet,
+} from "../boardDescription";
 import {
   createEmptyDescriptionSheet,
   getSheetSourceLabel,
   toEditableDescriptionSheets,
   truncateSheetSourceLabel,
 } from "../boardDescription";
+import { getCanonicalEntityPicturePath } from "../canonicalEntities";
+import { FILE_RES_BASE_URL } from "../fileDataSource";
 import "./NodeCard.css";
 import {
   clampInspectorPanelWidth,
@@ -31,22 +31,20 @@ type SheetEditorState = {
 
 interface NodeInspectorProps {
   node: BoardNode | null;
+  canonicalEntities: CanonicalEntity[];
   descriptionSheets: BoardDescriptionSheet[];
   connectedNodes: BoardNode[];
   onSaveNode: (
     id: number,
     patch: {
-      name: string;
+      CE_id: string;
       descriptionSheets: EditableBoardDescriptionSheet[];
-      node_type: BoardNodeType;
     }
   ) => Promise<void>;
 }
 
-const MAX_NAME_LEN = 64;
-
-function clampName(value: string) {
-  return value.length > MAX_NAME_LEN ? value.slice(0, MAX_NAME_LEN) : value;
+function normalizeSearchValue(value: string): string {
+  return value.trim().toLocaleLowerCase();
 }
 
 function cloneEditableSheet(sheet: EditableBoardDescriptionSheet): EditableBoardDescriptionSheet {
@@ -59,12 +57,13 @@ function cloneEditableSheet(sheet: EditableBoardDescriptionSheet): EditableBoard
 
 export const NodeInspector: React.FC<NodeInspectorProps> = ({
   node,
+  canonicalEntities,
   descriptionSheets,
   connectedNodes,
   onSaveNode,
 }) => {
-  const [name, setName] = useState("");
-  const [nodeType, setNodeType] = useState<BoardNodeType>(BOARD_NODE_TYPES[0]);
+  const [selectedCanonicalEntityId, setSelectedCanonicalEntityId] = useState("");
+  const [canonicalEntityFilter, setCanonicalEntityFilter] = useState("");
   const [sheets, setSheets] = useState<EditableBoardDescriptionSheet[]>([]);
   const [sheetEditor, setSheetEditor] = useState<SheetEditorState>(null);
   const [saving, setSaving] = useState(false);
@@ -72,22 +71,62 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   const [desktopWidth, setDesktopWidth] = useState(() =>
     clampInspectorPanelWidth(DESKTOP_INSPECTOR_PANEL_DEFAULT_WIDTH)
   );
-  const [desktopResizeState, setDesktopResizeState] = useState<DesktopResizeState>(null);
+  const [desktopResizeState, setDesktopResizeState] =
+    useState<DesktopResizeState>(null);
 
   const connectedNodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
-    connectedNodes.forEach((connectedNode) => map.set(connectedNode.node_id, connectedNode));
+    connectedNodes.forEach((connectedNode) =>
+      map.set(connectedNode.node_id, connectedNode)
+    );
     return map;
   }, [connectedNodes]);
 
+  const selectedCanonicalEntity = useMemo(
+    () =>
+      canonicalEntities.find(
+        (entity) => entity.en_id === selectedCanonicalEntityId
+      ) ?? null,
+    [canonicalEntities, selectedCanonicalEntityId]
+  );
+
+  const selectedCanonicalEntityImageUrl = useMemo(() => {
+    if (!selectedCanonicalEntity) return null;
+
+    const picturePath = getCanonicalEntityPicturePath(selectedCanonicalEntity);
+    return picturePath ? `${FILE_RES_BASE_URL}/res/${picturePath}` : null;
+  }, [selectedCanonicalEntity]);
+
+  const filteredCanonicalEntities = useMemo(() => {
+    const normalizedFilter = normalizeSearchValue(canonicalEntityFilter);
+    if (!normalizedFilter) return canonicalEntities;
+
+    const filteredEntities = canonicalEntities.filter((entity) => {
+      const haystack = [entity.name, entity.en_id, entity.entity_type]
+        .map((value) => normalizeSearchValue(value))
+        .join(" ");
+
+      return haystack.includes(normalizedFilter);
+    });
+
+    if (
+      selectedCanonicalEntity &&
+      !filteredEntities.some((entity) => entity.en_id === selectedCanonicalEntity.en_id)
+    ) {
+      return [selectedCanonicalEntity, ...filteredEntities];
+    }
+
+    return filteredEntities;
+  }, [canonicalEntities, canonicalEntityFilter, selectedCanonicalEntity]);
+
   useEffect(() => {
     if (node) {
-      setName(node.name ?? "");
-      setNodeType(normalizeNodeType(node.node_type));
+      setSelectedCanonicalEntityId(node.CE_id ?? "");
+      setCanonicalEntityFilter("");
       setSheets(toEditableDescriptionSheets(descriptionSheets));
     } else {
-      setName("");
-      setNodeType(BOARD_NODE_TYPES[0]);
+      setSelectedCanonicalEntityId("");
+      setCanonicalEntityFilter("");
       setSheets([]);
     }
 
@@ -113,7 +152,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
 
       event.preventDefault();
 
-      const nextWidth = desktopResizeState.startWidth - (event.clientX - desktopResizeState.startX);
+      const nextWidth =
+        desktopResizeState.startWidth -
+        (event.clientX - desktopResizeState.startX);
       setDesktopWidth(clampInspectorPanelWidth(nextWidth));
     };
 
@@ -139,8 +180,12 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   }, [desktopResizeState]);
 
   const disabled = !node || saving;
+  const currentEntityMissing =
+    Boolean(selectedCanonicalEntityId) && selectedCanonicalEntity === null;
 
-  const handleDesktopResizePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+  const handleDesktopResizePointerDown = (
+    event: React.PointerEvent<HTMLDivElement>
+  ) => {
     if (!event.isPrimary || event.button !== 0) return;
 
     event.preventDefault();
@@ -153,7 +198,10 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
     });
   };
 
-  const openSheetEditor = (sheet: EditableBoardDescriptionSheet, isNew: boolean) => {
+  const openSheetEditor = (
+    sheet: EditableBoardDescriptionSheet,
+    isNew: boolean
+  ) => {
     if (disabled) return;
 
     setSheetEditor({
@@ -188,7 +236,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
     setSheetEditor(null);
   };
 
-  const handleEditorDraftChange = (patch: Partial<EditableBoardDescriptionSheet>) => {
+  const handleEditorDraftChange = (
+    patch: Partial<EditableBoardDescriptionSheet>
+  ) => {
     setSheetEditor((currentEditor) =>
       currentEditor
         ? {
@@ -244,7 +294,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
     setSheets((prev) =>
       sheetEditor.isNew
         ? [...prev, normalizedSheet]
-        : prev.map((sheet) => (sheet.id === normalizedSheet.id ? normalizedSheet : sheet))
+        : prev.map((sheet) =>
+            sheet.id === normalizedSheet.id ? normalizedSheet : sheet
+          )
     );
     setSheetEditor(null);
   };
@@ -253,7 +305,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
     if (!sheetEditor) return;
 
     if (!sheetEditor.isNew) {
-      setSheets((prev) => prev.filter((sheet) => sheet.id !== sheetEditor.draft.id));
+      setSheets((prev) =>
+        prev.filter((sheet) => sheet.id !== sheetEditor.draft.id)
+      );
     }
     setSheetEditor(null);
   };
@@ -265,13 +319,22 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
       return;
     }
 
+    if (!selectedCanonicalEntityId) {
+      setError("Ноду нельзя сохранить без привязки к canonical entity.");
+      return;
+    }
+
+    if (!selectedCanonicalEntity) {
+      setError("Выберите существующую canonical entity.");
+      return;
+    }
+
     setError(null);
     setSaving(true);
 
     try {
       await onSaveNode(node.node_id, {
-        name: clampName(name),
-        node_type: nodeType,
+        CE_id: selectedCanonicalEntity.en_id,
         descriptionSheets: sheets,
       });
     } catch (saveError: unknown) {
@@ -332,7 +395,14 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
           paddingRight: 2,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+          }}
+        >
           <div style={{ fontWeight: 700, fontSize: 14 }}>Инспектор узла</div>
           <button
             type="button"
@@ -366,13 +436,13 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
         )}
 
         <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
-          Имя (до 64 символов)
+          Фильтр CE
           <input
-            type="text"
-            value={name}
-            maxLength={MAX_NAME_LEN}
-            disabled={disabled}
-            onChange={(event) => setName(event.target.value)}
+            type="search"
+            value={canonicalEntityFilter}
+            disabled={disabled || canonicalEntities.length === 0}
+            onChange={(event) => setCanonicalEntityFilter(event.target.value)}
+            placeholder="Поиск по имени, типу или en_id"
             style={{
               width: "100%",
               marginTop: 4,
@@ -381,17 +451,18 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               borderRadius: 6,
               border: "1px solid #ccc",
               boxSizing: "border-box",
-              backgroundColor: disabled ? "#f2f2f2" : "#fff",
+              backgroundColor:
+                disabled || canonicalEntities.length === 0 ? "#f2f2f2" : "#fff",
             }}
           />
         </label>
 
         <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
-          Тип узла
+          Canonical entity
           <select
-            value={nodeType}
-            disabled={disabled}
-            onChange={(event) => setNodeType(event.target.value as BoardNodeType)}
+            value={selectedCanonicalEntityId}
+            disabled={disabled || canonicalEntities.length === 0}
+            onChange={(event) => setSelectedCanonicalEntityId(event.target.value)}
             style={{
               width: "100%",
               marginTop: 4,
@@ -400,34 +471,166 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               borderRadius: 6,
               border: "1px solid #ccc",
               boxSizing: "border-box",
-              backgroundColor: disabled ? "#f2f2f2" : "#fff",
+              backgroundColor:
+                disabled || canonicalEntities.length === 0 ? "#f2f2f2" : "#fff",
             }}
           >
-            {BOARD_NODE_TYPES.map((type) => (
-              <option key={type} value={type}>
-                {type}
+            <option value="">Выберите canonical entity</option>
+            {currentEntityMissing && (
+              <option value={selectedCanonicalEntityId}>
+                Текущая CE недоступна: {selectedCanonicalEntityId}
+              </option>
+            )}
+            {filteredCanonicalEntities.map((entity) => (
+              <option key={entity.en_id} value={entity.en_id}>
+                {entity.name} ({entity.entity_type})
               </option>
             ))}
           </select>
         </label>
 
+        {canonicalEntities.length > 0 && filteredCanonicalEntities.length === 0 && (
+          <div
+            style={{
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: "#fff",
+              padding: "10px 12px",
+              fontSize: 12,
+              color: "#555",
+              lineHeight: 1.45,
+            }}
+          >
+            По текущему фильтру canonical entities не найдены.
+          </div>
+        )}
+
+        {canonicalEntities.length === 0 && (
+          <div
+            style={{
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: "#fff",
+              padding: "10px 12px",
+              fontSize: 12,
+              color: "#555",
+              lineHeight: 1.45,
+            }}
+          >
+            Сначала создайте хотя бы одну canonical entity через кнопку на верхней панели.
+          </div>
+        )}
+
+        {currentEntityMissing && (
+          <div
+            style={{
+              borderRadius: 10,
+              border: "1px solid #e2b5b5",
+              background: "#fff7f7",
+              padding: "10px 12px",
+              fontSize: 12,
+              color: "#7a1f1f",
+              lineHeight: 1.45,
+            }}
+          >
+            Текущая привязка к CE не найдена в списке. Выберите существующую canonical entity
+            перед сохранением.
+          </div>
+        )}
+
         <div
           style={{
-            borderRadius: 10,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            borderRadius: 12,
             border: "1px solid #ddd",
             background: "#fff",
-            padding: "10px 12px",
-            fontSize: 12,
-            color: "#555",
-            lineHeight: 1.45,
+            padding: "12px 12px 14px",
           }}
         >
-          Картинка ноды теперь настраивается не здесь, а в окне управления canonical entities.
+          <div style={{ fontSize: 12, fontWeight: 700 }}>Что подтянется в ноду из CE</div>
+
+          {selectedCanonicalEntity ? (
+            <>
+              <div
+                style={{
+                  width: "100%",
+                  aspectRatio: "1 / 1",
+                  borderRadius: 14,
+                  backgroundColor: selectedCanonicalEntityImageUrl ? "#000" : "#f0f0f0",
+                  overflow: "hidden",
+                  position: "relative",
+                  border: "1px solid #ddd",
+                }}
+              >
+                {selectedCanonicalEntityImageUrl ? (
+                  <img
+                    src={selectedCanonicalEntityImageUrl}
+                    alt=""
+                    draggable={false}
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 12,
+                      color: "#666",
+                      textAlign: "center",
+                      padding: 12,
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    У выбранной CE пока нет изображения.
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#666" }}>Имя</div>
+                <div style={{ fontSize: 13, color: "#222", fontWeight: 600 }}>
+                  {selectedCanonicalEntity.name || "Без имени"}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#666" }}>Тип</div>
+                <div style={{ fontSize: 13, color: "#222" }}>
+                  {selectedCanonicalEntity.entity_type}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#666" }}>en_id</div>
+                <div style={{ fontSize: 13, color: "#222" }}>
+                  {selectedCanonicalEntity.en_id}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 12, color: "#666", lineHeight: 1.45 }}>
+              Выберите canonical entity, и имя, тип и картинка ноды будут взяты из неё.
+            </div>
+          )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+          }}
+        >
           <div style={{ fontSize: 12, fontWeight: 700 }}>Описание по чанкам</div>
-          <div style={{ fontSize: 11, opacity: 0.65 }}>Двойной клик открывает отдельное окно редактирования.</div>
+          <div style={{ fontSize: 11, opacity: 0.65 }}>
+            Двойной клик открывает отдельное окно редактирования.
+          </div>
         </div>
 
         <div className="paper-stack">
@@ -436,10 +639,14 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               sheets.map((sheet) => {
                 const fullSourceLabel = getSheetSourceLabel(
                   sheet.relatedNodeIds
-                    .map((relatedNodeId) => connectedNodesById.get(relatedNodeId)?.name ?? "")
+                    .map(
+                      (relatedNodeId) =>
+                        connectedNodesById.get(relatedNodeId)?.name ?? ""
+                    )
                     .filter(Boolean)
                 );
-                const previewSourceLabel = truncateSheetSourceLabel(fullSourceLabel);
+                const previewSourceLabel =
+                  truncateSheetSourceLabel(fullSourceLabel);
 
                 return (
                   <article key={sheet.id} className="paper-note paper-note--editable">
@@ -448,7 +655,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
                         {previewSourceLabel ? (
                           <div className="paper-note__source">{previewSourceLabel}</div>
                         ) : (
-                          <div className="paper-note__source paper-note__source--empty">&nbsp;</div>
+                          <div className="paper-note__source paper-note__source--empty">
+                            &nbsp;
+                          </div>
                         )}
                       </div>
                     </div>
@@ -459,8 +668,13 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
                       onDoubleClick={() => handleOpenExistingSheet(sheet.id)}
                       onKeyDown={(event) => handleSheetCardKeyDown(event, sheet.id)}
                     >
-                      <div className={`paper-note__text${sheet.description ? "" : " paper-note__text--empty"}`}>
-                        {sheet.description || "Пустой листок. Дважды щёлкните, чтобы заполнить его."}
+                      <div
+                        className={`paper-note__text${
+                          sheet.description ? "" : " paper-note__text--empty"
+                        }`}
+                      >
+                        {sheet.description ||
+                          "Пустой листок. Дважды щёлкните, чтобы заполнить его."}
                       </div>
                     </div>
                   </article>
@@ -468,7 +682,8 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               })
             ) : (
               <div className="paper-stack__empty">
-                У этой ноды пока нет ни одного листка. Добавьте новый и распределите его по нужным связям.
+                У этой ноды пока нет ни одного листка. Добавьте новый и распределите его
+                по нужным связям.
               </div>
             )
           ) : null}
@@ -525,13 +740,21 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               gap: 14,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+              }}
+            >
               <div>
                 <div style={{ fontWeight: 700, fontSize: 16 }}>
                   {sheetEditor.isNew ? "Новый листок" : "Редактирование листка"}
                 </div>
                 <div style={{ marginTop: 4, fontSize: 12, opacity: 0.68 }}>
-                  Здесь можно изменить текст чанка, его приоритет и отметить связанные ноды галочками.
+                  Здесь можно изменить текст чанка, его приоритет и отметить связанные
+                  ноды галочками.
                 </div>
               </div>
 
@@ -557,7 +780,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               Текст листка
               <textarea
                 value={sheetEditor.draft.description}
-                onChange={(event) => handleEditorDraftChange({ description: event.target.value })}
+                onChange={(event) =>
+                  handleEditorDraftChange({ description: event.target.value })
+                }
                 rows={8}
                 style={{
                   width: "100%",
@@ -574,7 +799,13 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               />
             </label>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 10,
+              }}
+            >
               <label style={{ fontSize: 12, fontWeight: 600 }}>
                 Приоритет
                 <input
@@ -606,7 +837,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
                 <input
                   type="text"
                   value={sheetEditor.draft.timecode}
-                  onChange={(event) => handleEditorDraftChange({ timecode: event.target.value })}
+                  onChange={(event) =>
+                    handleEditorDraftChange({ timecode: event.target.value })
+                  }
                   style={{
                     width: "100%",
                     marginTop: 4,
@@ -634,7 +867,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               <input
                 type="checkbox"
                 checked={sheetEditor.draft.isNodeOwned}
-                onChange={(event) => handleEditorDraftChange({ isNodeOwned: event.target.checked })}
+                onChange={(event) =>
+                  handleEditorDraftChange({ isNodeOwned: event.target.checked })
+                }
               />
               <span>Сохранить этот чанк и как собственный текст текущей ноды</span>
             </label>
@@ -667,15 +902,20 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
                     >
                       <input
                         type="checkbox"
-                        checked={sheetEditor.draft.relatedNodeIds.includes(connectedNode.node_id)}
-                        onChange={() => handleEditorRelatedNodeToggle(connectedNode.node_id)}
+                        checked={sheetEditor.draft.relatedNodeIds.includes(
+                          connectedNode.node_id
+                        )}
+                        onChange={() =>
+                          handleEditorRelatedNodeToggle(connectedNode.node_id)
+                        }
                       />
                       <span>{connectedNode.name}</span>
                     </label>
                   ))
                 ) : (
                   <div style={{ fontSize: 12, color: "#666" }}>
-                    У текущей ноды пока нет связанных соседей, поэтому листок можно сохранить только в неё саму.
+                    У текущей ноды пока нет связанных соседей, поэтому листок можно
+                    сохранить только в неё саму.
                   </div>
                 )}
               </div>

@@ -8,6 +8,10 @@ import type {
   BoardVersion,
   CanonicalEntity,
 } from "./boardTypes";
+import type {
+  CanonicalEntitiesSyncResult,
+  CanonicalEntityDeleteResult,
+} from "./boardDataSource";
 import { boardDataSource } from "./boardDataSource";
 import { authClient } from "./auth/authClient";
 
@@ -165,10 +169,26 @@ export default function App() {
     );
   };
 
-  const handleCanonicalEntitiesChange = async (nextEntities: CanonicalEntity[]) => {
+  const handleCanonicalEntitiesChange = async (
+    nextEntities: CanonicalEntity[]
+  ): Promise<CanonicalEntitiesSyncResult> => {
     const boardId = "demo-board";
-    await boardDataSource.updateCanonicalEntities(boardId, nextEntities);
+    const syncResult = await boardDataSource.updateCanonicalEntities(boardId, nextEntities);
     setCanonicalEntities(nextEntities);
+    return syncResult;
+  };
+
+  const handleCanonicalEntityDelete = async (
+    entityId: string
+  ): Promise<CanonicalEntityDeleteResult> => {
+    const boardId = "demo-board";
+    const deleteResult = await boardDataSource.deleteCanonicalEntity(boardId, entityId);
+
+    if (deleteResult.outcome === "deleted") {
+      setCanonicalEntities((prev) => prev.filter((entity) => entity.en_id !== entityId));
+    }
+
+    return deleteResult;
   };
 
   const handleDeleteVersion = async (version: number) => {
@@ -302,6 +322,7 @@ export default function App() {
         onDeleteVersion={handleDeleteVersion}
         onCurrentVersionPublicationChange={handleCurrentVersionPublicationChange}
         onCanonicalEntitiesChange={handleCanonicalEntitiesChange}
+        onCanonicalEntityDelete={handleCanonicalEntityDelete}
         onRequestEditMode={handleRequestEditMode}
       />
 

@@ -48,6 +48,7 @@ export type BoardChunk = {
 
 export type BoardNode = {
   node_id: number;
+  CE_id: string;
   name: string;
   pos_x: number;
   pos_y: number;

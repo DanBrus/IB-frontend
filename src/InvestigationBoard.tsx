@@ -4,12 +4,15 @@ import type {
   BoardAccessMode,
   BoardEdge,
   BoardNode,
-  BoardNodeType,
   BoardVersion,
   CanonicalEntity,
 } from "./boardTypes";
 import { formatBoardVersion, parseBoardVersion } from "./boardTypes";
 import type { EditableBoardDescriptionSheet } from "./boardDescription";
+import type {
+  CanonicalEntitiesSyncResult,
+  CanonicalEntityDeleteResult,
+} from "./boardDataSource";
 import { CanonicalEntityManager } from "./components/CanonicalEntityManager";
 import { InvestigationBoardHeader } from "./components/InvestigationBoardHeader";
 import { InvestigationBoardToolbar } from "./components/InvestigationBoardToolbar";
@@ -53,13 +56,18 @@ interface InvestigationBoardProps {
   onSelectedNodeSave: (
     id: number,
     patch: {
-      name: string;
+      CE_id: string;
       descriptionSheets: EditableBoardDescriptionSheet[];
-      node_type: BoardNodeType;
     }
   ) => Promise<void>;
 
-  onCanonicalEntitiesChange: (entities: CanonicalEntity[]) => Promise<void>;
+  onCanonicalEntitiesChange: (
+    entities: CanonicalEntity[]
+  ) => Promise<CanonicalEntitiesSyncResult>;
+  onCanonicalEntityDelete: (
+    entityId: string
+  ) => Promise<CanonicalEntityDeleteResult>;
+  onCanonicalEntitiesManagerClose: (shouldRefreshNodes: boolean) => void | Promise<void>;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
@@ -90,6 +98,8 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   onNodePositionChange,
   onSelectedNodeSave,
   onCanonicalEntitiesChange,
+  onCanonicalEntityDelete,
+  onCanonicalEntitiesManagerClose,
   onUploadImage,
 }) => {
   const [newVersionOpen, setNewVersionOpen] = useState(false);
@@ -186,9 +196,10 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
     setCanonicalEntitiesOpen(true);
   };
 
-  const closeCanonicalEntitiesDialog = () => {
+  const closeCanonicalEntitiesDialog = (options?: { shouldRefreshNodes: boolean }) => {
     setCanonicalEntitiesOpen(false);
     setCanonicalEntityCreateRequestToken(0);
+    void onCanonicalEntitiesManagerClose(options?.shouldRefreshNodes ?? false);
   };
 
   const handleQuickCreateCanonicalEntity = () => {
@@ -231,6 +242,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
       <InvestigationBoardWorkspace
         nodes={nodes}
         edges={edges}
+        canonicalEntities={canonicalEntities}
         mode={mode}
         selectedNode={selectedNode}
         accessMode={accessMode}
@@ -246,6 +258,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
           createRequestToken={canonicalEntityCreateRequestToken}
           onClose={closeCanonicalEntitiesDialog}
           onChange={onCanonicalEntitiesChange}
+          onDelete={onCanonicalEntityDelete}
           onUploadImage={onUploadImage}
         />
       )}

@@ -22,8 +22,17 @@ export type BoardGraph = {
   is_published?: boolean | null;
 };
 
+export type CanonicalEntitiesSyncResult = {
+  persisted: boolean;
+};
+
+export type CanonicalEntityDeleteResult = {
+  outcome: "deleted" | "blocked" | "placeholder";
+};
+
 export interface BoardDataSource {
   getCurrentBoard(boardId: string, version?: number | string): Promise<BoardGraph>;
+  getNodes(boardId: string, version?: number | string): Promise<BoardNode[]>;
   getVersions(boardId: string): Promise<BoardVersion[]>;
   getCanonicalEntities(boardId: string): Promise<CanonicalEntity[]>;
   createVersion(payload: {
@@ -41,7 +50,14 @@ export interface BoardDataSource {
     board_name?: string | null;
     is_published?: boolean | null;
   }): Promise<void>;
-  updateCanonicalEntities(boardId: string, entities: CanonicalEntity[]): Promise<void>;
+  updateCanonicalEntities(
+    boardId: string,
+    entities: CanonicalEntity[]
+  ): Promise<CanonicalEntitiesSyncResult>;
+  deleteCanonicalEntity(
+    boardId: string,
+    entityId: string
+  ): Promise<CanonicalEntityDeleteResult>;
 }
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/$/, "");
@@ -122,6 +138,7 @@ function normalizeNode(rawNode: unknown): BoardNode | null {
 
   return {
     node_id: rawNodeId,
+    CE_id: typeof node.CE_id === "string" ? node.CE_id.trim() : "",
     name: typeof node.name === "string" ? node.name : "",
     pos_x: rawPosX,
     pos_y: rawPosY,
@@ -237,6 +254,45 @@ class HttpBoardDataSource implements BoardDataSource {
       };
     } catch (error) {
       console.error("[BoardDataSource] Ошибка при подключении к серверу", error);
+      throw error;
+    }
+  }
+
+  async getNodes(boardId: string, version?: number | string): Promise<BoardNode[]> {
+    let url = `${API_BASE_URL}/graph/nodes`;
+    if (version !== undefined) {
+      const qp = new URLSearchParams({ version: serializeRequestedVersion(version) });
+      url += `?${qp.toString()}`;
+    }
+
+    console.log("[BoardDataSource] Запрашиваем ноды доски", {
+      boardId,
+      url,
+      version,
+    });
+
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!res.ok) {
+        console.error("[BoardDataSource] Ошибка при запросе нод", res.status, res.statusText);
+        throw new Error(`HTTP error ${res.status}: ${res.statusText || "Unknown error"}`);
+      }
+
+      const data = (await res.json()) as Array<Record<string, unknown>>;
+
+      console.log("[BoardDataSource] Ноды получены", data);
+      return data
+        .map((rawNode) => normalizeNode(rawNode))
+        .filter((node): node is BoardNode => node !== null)
+        .sort((left, right) => left.node_id - right.node_id);
+    } catch (error) {
+      console.error("[BoardDataSource] Ошибка при запросе нод доски", error);
       throw error;
     }
   }
@@ -408,6 +464,7 @@ class HttpBoardDataSource implements BoardDataSource {
           version: payload.version,
           nodes: payload.nodes.map((node) => ({
             node_id: node.node_id,
+            CE_id: node.CE_id,
             name: node.name,
             pos_x: node.pos_x,
             pos_y: node.pos_y,
@@ -445,7 +502,10 @@ class HttpBoardDataSource implements BoardDataSource {
     }
   }
 
-  async updateCanonicalEntities(boardId: string, entities: CanonicalEntity[]): Promise<void> {
+  async updateCanonicalEntities(
+    boardId: string,
+    entities: CanonicalEntity[]
+  ): Promise<CanonicalEntitiesSyncResult> {
     console.log("[BoardDataSource] Placeholder sync для canonical-entities", {
       boardId,
       entities,
@@ -453,6 +513,21 @@ class HttpBoardDataSource implements BoardDataSource {
 
     // TODO: заменить на реальный endpoint, когда backend будет готов.
     await Promise.resolve();
+    return { persisted: false };
+  }
+
+  async deleteCanonicalEntity(
+    boardId: string,
+    entityId: string
+  ): Promise<CanonicalEntityDeleteResult> {
+    console.log("[BoardDataSource] Placeholder delete для canonical-entity", {
+      boardId,
+      entityId,
+    });
+
+    // TODO: заменить на реальный endpoint, когда backend будет готов.
+    await Promise.resolve();
+    return { outcome: "placeholder" };
   }
 }
 

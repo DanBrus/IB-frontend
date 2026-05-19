@@ -6,6 +6,10 @@ import {
   sortCanonicalEntities,
 } from "../canonicalEntities";
 import { BOARD_NODE_TYPES, type BoardNodeType, type CanonicalEntity } from "../boardTypes";
+import type {
+  CanonicalEntitiesSyncResult,
+  CanonicalEntityDeleteResult,
+} from "../boardDataSource";
 import { FILE_RES_BASE_URL } from "../fileDataSource";
 
 type Area = { x: number; y: number; width: number; height: number };
@@ -17,8 +21,9 @@ type EntityEditorState = {
 interface CanonicalEntityManagerProps {
   entities: CanonicalEntity[];
   createRequestToken: number;
-  onClose: () => void;
-  onChange: (entities: CanonicalEntity[]) => Promise<void>;
+  onClose: (options?: { shouldRefreshNodes: boolean }) => void;
+  onChange: (entities: CanonicalEntity[]) => Promise<CanonicalEntitiesSyncResult>;
+  onDelete: (entityId: string) => Promise<CanonicalEntityDeleteResult>;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
@@ -28,10 +33,12 @@ interface CanonicalEntityEditorDialogProps {
   existingEntities: CanonicalEntity[];
   onClose: () => void;
   onSave: (nextEntity: CanonicalEntity, previousEntityId: string | null) => Promise<void>;
+  onDelete?: (() => Promise<CanonicalEntityDeleteResult>) | null;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
 const TARGET_SIZE = 512;
+type StatusTone = "info" | "success";
 
 function normalizeSearchValue(value: string): string {
   return value.trim().toLocaleLowerCase();
@@ -107,6 +114,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   existingEntities,
   onClose,
   onSave,
+  onDelete,
   onUploadImage,
 }) => {
   const [entityId, setEntityId] = useState(entity.en_id);
@@ -114,6 +122,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   const [entityType, setEntityType] = useState<BoardNodeType>(entity.entity_type);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [imageChanged, setImageChanged] = useState(false);
   const [pickedFileName, setPickedFileName] = useState<string>("image.png");
@@ -168,7 +177,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
 
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
-    if (saving) return;
+    if (saving || deleting) return;
 
     const file = event.dataTransfer.files?.[0];
     if (file) acceptFile(file);
@@ -256,6 +265,43 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
     }
   };
 
+  const handleDelete = async () => {
+    if (!onDelete) return;
+
+    const confirmed = window.confirm(
+      `Удалить canonical entity "${entity.name || entity.en_id}"?`
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setError(null);
+
+    try {
+      const deleteResult = await onDelete();
+
+      if (deleteResult.outcome === "blocked") {
+        setError(
+          "Сначала удалите все ноды, связанные с данной canonical Entity."
+        );
+        return;
+      }
+
+      if (deleteResult.outcome === "placeholder") {
+        setError(
+          "Удаление canonical entity пока работает в placeholder-режиме."
+        );
+      }
+    } catch (deleteError: unknown) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Не удалось удалить сущность."
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div
       style={{
@@ -268,7 +314,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
         justifyContent: "center",
         padding: 20,
       }}
-      onClick={saving ? undefined : onClose}
+      onClick={saving || deleting ? undefined : onClose}
     >
       <div
         onClick={(event) => event.stopPropagation()}
@@ -299,14 +345,14 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
           <button
             type="button"
             onClick={onClose}
-            disabled={saving}
+            disabled={saving || deleting}
             style={{
               padding: "6px 10px",
               borderRadius: 6,
               border: "1px solid #bbb",
               backgroundColor: "#fff",
               color: "#333",
-              cursor: saving ? "default" : "pointer",
+              cursor: saving || deleting ? "default" : "pointer",
               fontSize: 13,
             }}
           >
@@ -321,7 +367,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
           <input
             type="text"
             value={entityId}
-            disabled={saving || !isNew}
+            disabled={saving || deleting || !isNew}
             onChange={(event) => setEntityId(event.target.value)}
             style={{
               width: "100%",
@@ -331,7 +377,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
               borderRadius: 6,
               border: "1px solid #ccc",
               boxSizing: "border-box",
-              backgroundColor: saving || !isNew ? "#f2f2f2" : "#fff",
+              backgroundColor: saving || deleting || !isNew ? "#f2f2f2" : "#fff",
             }}
           />
         </label>
@@ -341,7 +387,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
           <input
             type="text"
             value={name}
-            disabled={saving}
+            disabled={saving || deleting}
             onChange={(event) => setName(event.target.value)}
             style={{
               width: "100%",
@@ -351,7 +397,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
               borderRadius: 6,
               border: "1px solid #ccc",
               boxSizing: "border-box",
-              backgroundColor: saving ? "#f2f2f2" : "#fff",
+              backgroundColor: saving || deleting ? "#f2f2f2" : "#fff",
             }}
           />
         </label>
@@ -360,7 +406,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
           Тип сущности
           <select
             value={entityType}
-            disabled={saving}
+            disabled={saving || deleting}
             onChange={(event) => setEntityType(event.target.value as BoardNodeType)}
             style={{
               width: "100%",
@@ -370,7 +416,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
               borderRadius: 6,
               border: "1px solid #ccc",
               boxSizing: "border-box",
-              backgroundColor: saving ? "#f2f2f2" : "#fff",
+              backgroundColor: saving || deleting ? "#f2f2f2" : "#fff",
             }}
           >
             {BOARD_NODE_TYPES.map((type) => (
@@ -439,21 +485,21 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
               border: "1px dashed #999",
               backgroundColor: "#fff",
               fontSize: 12,
-              opacity: saving ? 0.6 : 1,
+              opacity: saving || deleting ? 0.6 : 1,
             }}
           >
             Перетащите PNG/JPEG сюда или{" "}
             <button
               type="button"
               onClick={openFileDialog}
-              disabled={saving}
+              disabled={saving || deleting}
               style={{
                 border: "none",
                 background: "none",
                 padding: 0,
                 color: "#0b57d0",
                 textDecoration: "underline",
-                cursor: saving ? "default" : "pointer",
+                cursor: saving || deleting ? "default" : "pointer",
                 fontSize: 12,
               }}
             >
@@ -501,7 +547,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
                   max={3}
                   step={0.01}
                   value={zoom}
-                  disabled={saving}
+                  disabled={saving || deleting}
                   onChange={(event) => setZoom(Number(event.target.value))}
                   style={{ flexGrow: 1 }}
                 />
@@ -511,14 +557,14 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
                 <button
                   type="button"
                   onClick={handleApplyCrop}
-                  disabled={saving || !croppedAreaPixels}
+                  disabled={saving || deleting || !croppedAreaPixels}
                   style={{
                     padding: "6px 10px",
                     borderRadius: 6,
                     border: "1px solid #555",
-                    backgroundColor: saving ? "#ddd" : "#333",
-                    color: saving ? "#777" : "#fff",
-                    cursor: saving ? "default" : "pointer",
+                    backgroundColor: saving || deleting ? "#ddd" : "#333",
+                    color: saving || deleting ? "#777" : "#fff",
+                    cursor: saving || deleting ? "default" : "pointer",
                     fontSize: 13,
                   }}
                 >
@@ -530,40 +576,63 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
           )}
         </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 6,
-              border: "1px solid #bbb",
-              backgroundColor: "#f2f2f2",
-              color: "#333",
-              cursor: saving ? "default" : "pointer",
-              fontSize: 13,
-            }}
-          >
-            Отмена
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 6,
-              border: "1px solid #555",
-              backgroundColor: saving ? "#ddd" : "#333",
-              color: saving ? "#777" : "#f5f5f5",
-              cursor: saving ? "default" : "pointer",
-              fontSize: 13,
-              fontWeight: 600,
-            }}
-          >
-            {saving ? "Сохраняю…" : isNew ? "Создать сущность" : "Сохранить сущность"}
-          </button>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+          <div>
+            {!isNew && onDelete && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={saving || deleting}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #b00020",
+                  backgroundColor: "#fff",
+                  color: "#b00020",
+                  cursor: saving || deleting ? "default" : "pointer",
+                  fontSize: 13,
+                }}
+              >
+                {deleting ? "Удаляю…" : "Удалить сущность"}
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving || deleting}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 6,
+                border: "1px solid #bbb",
+                backgroundColor: "#f2f2f2",
+                color: "#333",
+                cursor: saving || deleting ? "default" : "pointer",
+                fontSize: 13,
+              }}
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || deleting}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "1px solid #555",
+                backgroundColor: saving || deleting ? "#ddd" : "#333",
+                color: saving || deleting ? "#777" : "#f5f5f5",
+                cursor: saving || deleting ? "default" : "pointer",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              {saving ? "Сохраняю…" : isNew ? "Создать сущность" : "Сохранить сущность"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -575,11 +644,15 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   createRequestToken,
   onClose,
   onChange,
+  onDelete,
   onUploadImage,
 }) => {
   const [search, setSearch] = useState("");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusTone, setStatusTone] = useState<StatusTone>("info");
   const [editorState, setEditorState] = useState<EntityEditorState>(null);
+  const [shouldRefreshNodesOnClose, setShouldRefreshNodesOnClose] =
+    useState(false);
   const handledCreateRequestTokenRef = useRef<number | null>(null);
 
   const groupedEntities = useMemo(() => buildGroupedEntities(entities, search), [entities, search]);
@@ -615,11 +688,48 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
         : [...entities, nextEntity]
     );
 
-    await onChange(nextEntities);
+    const syncResult = await onChange(nextEntities);
+
+    if (previousEntityId !== null && syncResult.persisted) {
+      setShouldRefreshNodesOnClose(true);
+    }
+
+    setStatusTone(syncResult.persisted ? "success" : "info");
     setStatusMessage(
-      "Список сущностей обновлён локально. Отправка на сервер пока работает в placeholder-режиме."
+      syncResult.persisted
+        ? previousEntityId === null
+          ? "Новая canonical entity сохранена на сервере."
+          : "Canonical entity сохранена на сервере. После закрытия окна ноды будут перечитаны."
+        : previousEntityId === null
+          ? "Новая сущность добавлена локально. Серверный sync пока работает в placeholder-режиме."
+          : "Изменения сущности сохранены локально. Серверный sync пока работает в placeholder-режиме."
     );
     setEditorState(null);
+  };
+
+  const handleDeleteEntity = async (
+    entityId: string
+  ): Promise<CanonicalEntityDeleteResult> => {
+    const deleteResult = await onDelete(entityId);
+
+    if (deleteResult.outcome === "deleted") {
+      setStatusTone("success");
+      setStatusMessage("Canonical entity удалена.");
+      setEditorState(null);
+    }
+
+    if (deleteResult.outcome === "placeholder") {
+      setStatusTone("info");
+      setStatusMessage(
+        "Удаление canonical entity пока работает в placeholder-режиме."
+      );
+    }
+
+    return deleteResult;
+  };
+
+  const handleClose = () => {
+    onClose({ shouldRefreshNodes: shouldRefreshNodesOnClose });
   };
 
   return (
@@ -635,7 +745,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
           justifyContent: "center",
           padding: 20,
         }}
-        onClick={onClose}
+        onClick={handleClose}
       >
         <div
           onClick={(event) => event.stopPropagation()}
@@ -687,7 +797,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={handleClose}
                   style={{
                     padding: "6px 10px",
                     borderRadius: 6,
@@ -723,7 +833,15 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
             </label>
 
             {statusMessage && (
-              <div style={{ fontSize: 12, color: "#2a5c2a", background: "#f4fbf4", padding: "8px 10px", borderRadius: 8 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: statusTone === "success" ? "#2a5c2a" : "#244a7d",
+                  background: statusTone === "success" ? "#f4fbf4" : "#f2f7ff",
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                }}
+              >
                 {statusMessage}
               </div>
             )}
@@ -847,6 +965,11 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
           existingEntities={entities}
           onClose={() => setEditorState(null)}
           onSave={handleSaveEntity}
+          onDelete={
+            editorState.isNew
+              ? null
+              : () => handleDeleteEntity(editorState.entity.en_id)
+          }
           onUploadImage={onUploadImage}
         />
       )}
