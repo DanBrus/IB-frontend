@@ -8,11 +8,16 @@ export function getCanonicalEntityPicturePath(entity: CanonicalEntity): string |
   return normalizedPaths.length > 0 ? normalizedPaths[normalizedPaths.length - 1] : null;
 }
 
-export function getCanonicalEntityMergeTarget(entity: CanonicalEntity): string | null {
-  if (typeof entity.merged_to !== "string") return null;
+export function getCanonicalEntityMergeTarget(entity: CanonicalEntity): number | null {
+  return typeof entity.merged_to === "number" && Number.isFinite(entity.merged_to)
+    ? entity.merged_to
+    : null;
+}
 
-  const normalizedValue = entity.merged_to.trim();
-  return normalizedValue.length > 0 ? normalizedValue : null;
+export function formatCanonicalEntityId(entityId: number | null | undefined): string {
+  return typeof entityId === "number" && Number.isFinite(entityId)
+    ? `ce-${entityId}`
+    : "";
 }
 
 export function isCanonicalEntityMerged(entity: CanonicalEntity): boolean {
@@ -24,22 +29,13 @@ export function sortCanonicalEntities(entities: CanonicalEntity[]): CanonicalEnt
     (left, right) =>
       left.entity_type.localeCompare(right.entity_type, "ru") ||
       left.name.localeCompare(right.name, "ru") ||
-      left.en_id.localeCompare(right.en_id, "ru")
+      left.en_id - right.en_id
   );
 }
 
-export function createEmptyCanonicalEntity(existingEntities: CanonicalEntity[]): CanonicalEntity {
-  const existingIds = new Set(existingEntities.map((entity) => entity.en_id));
-
-  let counter = existingEntities.length + 1;
-  let nextId = `canonical-entity-${counter}`;
-  while (existingIds.has(nextId)) {
-    counter += 1;
-    nextId = `canonical-entity-${counter}`;
-  }
-
+export function createEmptyCanonicalEntity(entityId: number): CanonicalEntity {
   return {
-    en_id: nextId,
+    en_id: entityId,
     name: "",
     entity_type: "person_node",
     picture_paths: [],

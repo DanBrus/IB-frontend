@@ -11,6 +11,7 @@ import {
   truncateSheetSourceLabel,
 } from "../boardDescription";
 import {
+  formatCanonicalEntityId,
   getCanonicalEntityMergeTarget,
   getCanonicalEntityPicturePath,
   isCanonicalEntityMerged,
@@ -41,7 +42,7 @@ interface NodeInspectorProps {
   onSaveNode: (
     id: number,
     patch: {
-      ce_id: string;
+      ce_id: number;
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => Promise<void>;
@@ -61,8 +62,10 @@ function cloneEditableSheet(sheet: EditableBoardDescriptionSheet): EditableBoard
 
 function formatCanonicalEntityOptionLabel(entity: CanonicalEntity): string {
   const mergedTarget = getCanonicalEntityMergeTarget(entity);
-  const baseLabel = `${entity.name} (${entity.entity_type})`;
-  return mergedTarget ? `${baseLabel} [MERGED -> ${mergedTarget}]` : baseLabel;
+  const baseLabel = `${entity.name} (${entity.entity_type}) [${formatCanonicalEntityId(entity.en_id)}]`;
+  return mergedTarget
+    ? `${baseLabel} [MERGED -> ${formatCanonicalEntityId(mergedTarget)}]`
+    : baseLabel;
 }
 
 export const NodeInspector: React.FC<NodeInspectorProps> = ({
@@ -72,7 +75,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   connectedNodes,
   onSaveNode,
 }) => {
-  const [selectedCanonicalEntityId, setSelectedCanonicalEntityId] = useState("");
+  const [selectedCanonicalEntityId, setSelectedCanonicalEntityId] = useState<number | null>(null);
   const [canonicalEntityFilter, setCanonicalEntityFilter] = useState("");
   const [sheets, setSheets] = useState<EditableBoardDescriptionSheet[]>([]);
   const [sheetEditor, setSheetEditor] = useState<SheetEditorState>(null);
@@ -126,9 +129,11 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
     const filteredEntities = canonicalEntities.filter((entity) => {
       const haystack = [
         entity.name,
-        entity.en_id,
+        String(entity.en_id),
+        formatCanonicalEntityId(entity.en_id),
         entity.entity_type,
-        getCanonicalEntityMergeTarget(entity) ?? "",
+        String(getCanonicalEntityMergeTarget(entity) ?? ""),
+        formatCanonicalEntityId(getCanonicalEntityMergeTarget(entity)),
       ]
         .map((value) => normalizeSearchValue(value))
         .join(" ");
@@ -148,11 +153,11 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
 
   useEffect(() => {
     if (node) {
-      setSelectedCanonicalEntityId(node.ce_id ?? "");
+      setSelectedCanonicalEntityId(node.ce_id ?? null);
       setCanonicalEntityFilter("");
       setSheets(toEditableDescriptionSheets(descriptionSheets));
     } else {
-      setSelectedCanonicalEntityId("");
+      setSelectedCanonicalEntityId(null);
       setCanonicalEntityFilter("");
       setSheets([]);
     }
@@ -208,7 +213,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
 
   const disabled = !node || saving;
   const currentEntityMissing =
-    Boolean(selectedCanonicalEntityId) && selectedCanonicalEntity === null;
+    selectedCanonicalEntityId !== null && selectedCanonicalEntity === null;
 
   const handleDesktopResizePointerDown = (
     event: React.PointerEvent<HTMLDivElement>
@@ -347,7 +352,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
       return;
     }
 
-    if (!selectedCanonicalEntityId) {
+    if (selectedCanonicalEntityId === null) {
       setError("Ноду нельзя сохранить без привязки к canonical entity.");
       return;
     }
@@ -470,7 +475,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             value={canonicalEntityFilter}
             disabled={disabled || canonicalEntities.length === 0}
             onChange={(event) => setCanonicalEntityFilter(event.target.value)}
-            placeholder="Поиск по имени, типу или en_id"
+            placeholder="Поиск по имени, типу или ce-id"
             style={{
               width: "100%",
               marginTop: 4,
@@ -488,9 +493,13 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
         <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
           Canonical entity
           <select
-            value={selectedCanonicalEntityId}
+            value={selectedCanonicalEntityId === null ? "" : String(selectedCanonicalEntityId)}
             disabled={disabled || canonicalEntities.length === 0}
-            onChange={(event) => setSelectedCanonicalEntityId(event.target.value)}
+            onChange={(event) =>
+              setSelectedCanonicalEntityId(
+                event.target.value === "" ? null : Number(event.target.value)
+              )
+            }
             style={{
               width: "100%",
               marginTop: 4,
@@ -509,14 +518,14 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
           >
             <option value="">Выберите canonical entity</option>
             {currentEntityMissing && (
-              <option value={selectedCanonicalEntityId}>
-                Текущая CE недоступна: {selectedCanonicalEntityId}
+              <option value={String(selectedCanonicalEntityId)}>
+                Текущая CE недоступна: {formatCanonicalEntityId(selectedCanonicalEntityId)}
               </option>
             )}
             {filteredCanonicalEntities.map((entity) => (
               <option
                 key={entity.en_id}
-                value={entity.en_id}
+                value={String(entity.en_id)}
                 style={{
                   color: isCanonicalEntityMerged(entity) ? "#777" : "#222",
                 }}
@@ -654,9 +663,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <div style={{ fontSize: 12, color: "#666" }}>en_id</div>
+                <div style={{ fontSize: 12, color: "#666" }}>CE ID</div>
                 <div style={{ fontSize: 13, color: selectedCanonicalEntityTextColor }}>
-                  {selectedCanonicalEntity.en_id}
+                  {formatCanonicalEntityId(selectedCanonicalEntity.en_id)}
                 </div>
               </div>
 
@@ -666,7 +675,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
                     MERGED
                   </div>
                   <div style={{ fontSize: 12, color: "#777" }}>
-                    merged_to: {selectedCanonicalEntityMergeTarget}
+                    merged_to: {formatCanonicalEntityId(selectedCanonicalEntityMergeTarget)}
                   </div>
                 </div>
               )}

@@ -58,7 +58,7 @@ export interface BoardDataSource {
   ): Promise<CanonicalEntitiesSyncResult>;
   deleteCanonicalEntity(
     boardId: string,
-    entityId: string
+    entityId: number
   ): Promise<CanonicalEntityDeleteResult>;
 }
 
@@ -95,14 +95,10 @@ function normalizePublishedFlag(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
-function normalizeOptionalString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-
-  const normalizedValue = value.trim();
-  return normalizedValue.length > 0 ? normalizedValue : null;
-}
-
 function normalizeNumericId(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim().length === 0) return null;
+
   const normalizedValue = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(normalizedValue)) return null;
 
@@ -175,17 +171,20 @@ function normalizeNode(rawNode: unknown): BoardNode | null {
   const rawNodeId = typeof node.node_id === "number" ? node.node_id : Number(node.node_id ?? 0);
   const rawPosX = typeof node.pos_x === "number" ? node.pos_x : Number(node.pos_x ?? 0);
   const rawPosY = typeof node.pos_y === "number" ? node.pos_y : Number(node.pos_y ?? 0);
+  const ceId = normalizeNumericId(node.ce_id ?? node.CE_id);
 
-  if (!Number.isFinite(rawNodeId) || !Number.isFinite(rawPosX) || !Number.isFinite(rawPosY)) {
+  if (
+    !Number.isFinite(rawNodeId) ||
+    !Number.isFinite(rawPosX) ||
+    !Number.isFinite(rawPosY) ||
+    ceId === null
+  ) {
     return null;
   }
 
   return {
     node_id: rawNodeId,
-    ce_id:
-      (typeof node.ce_id === "string" ? node.ce_id : null)?.trim() ??
-      (typeof node.CE_id === "string" ? node.CE_id : null)?.trim() ??
-      "",
+    ce_id: ceId,
     name: typeof node.name === "string" ? node.name : "",
     pos_x: rawPosX,
     pos_y: rawPosY,
@@ -234,14 +233,15 @@ function normalizeCanonicalEntity(rawEntity: unknown): CanonicalEntity | null {
   if (!rawEntity || typeof rawEntity !== "object") return null;
 
   const entity = rawEntity as Record<string, unknown>;
-  if (typeof entity.en_id !== "string" || !entity.en_id.trim()) return null;
+  const entityId = normalizeNumericId(entity.en_id);
+  if (entityId === null) return null;
 
   return {
-    en_id: entity.en_id.trim(),
+    en_id: entityId,
     name: typeof entity.name === "string" ? entity.name.trim() : "",
     entity_type: normalizeNodeType(entity.entity_type),
     picture_paths: normalizePicturePaths(entity.picture_paths),
-    merged_to: normalizeOptionalString(entity.merged_to),
+    merged_to: normalizeNumericId(entity.merged_to),
   };
 }
 
@@ -249,15 +249,17 @@ function normalizeFreeIds(rawValue: unknown): FreeIds | null {
   if (!rawValue || typeof rawValue !== "object") return null;
 
   const record = rawValue as Record<string, unknown>;
+  const ceId = normalizeNumericId(record.ce_id);
   const nodeId = normalizeNumericId(record.node_id);
   const edgeId = normalizeNumericId(record.edge_id);
   const chunkId = normalizeNumericId(record.chunk_id);
 
-  if (nodeId === null || edgeId === null || chunkId === null) {
+  if (ceId === null || nodeId === null || edgeId === null || chunkId === null) {
     return null;
   }
 
   return {
+    ce_id: ceId,
     node_id: nodeId,
     edge_id: edgeId,
     chunk_id: chunkId,
@@ -270,7 +272,7 @@ function serializeCanonicalEntity(entity: CanonicalEntity): Record<string, unkno
     name: entity.name,
     entity_type: entity.entity_type,
     picture_paths: entity.picture_paths,
-    merged_to: normalizeOptionalString(entity.merged_to),
+    merged_to: entity.merged_to ?? null,
   };
 }
 
@@ -466,7 +468,7 @@ class HttpBoardDataSource implements BoardDataSource {
           (left, right) =>
             left.entity_type.localeCompare(right.entity_type, "ru") ||
             left.name.localeCompare(right.name, "ru") ||
-            left.en_id.localeCompare(right.en_id, "ru")
+            left.en_id - right.en_id
         );
     } catch (error) {
       console.error("[BoardDataSource] Ошибка при запросе canonical-entities", error);
@@ -670,7 +672,7 @@ class HttpBoardDataSource implements BoardDataSource {
 
   async deleteCanonicalEntity(
     boardId: string,
-    entityId: string
+    entityId: number
   ): Promise<CanonicalEntityDeleteResult> {
     console.log("[BoardDataSource] Удаляем canonical-entity", {
       boardId,

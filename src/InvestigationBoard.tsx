@@ -56,7 +56,7 @@ interface InvestigationBoardProps {
   onSelectedNodeSave: (
     id: number,
     patch: {
-      ce_id: string;
+      ce_id: number;
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => Promise<void>;
@@ -65,8 +65,9 @@ interface InvestigationBoardProps {
     entities: CanonicalEntity[]
   ) => Promise<CanonicalEntitiesSyncResult>;
   onCanonicalEntityDelete: (
-    entityId: string
+    entityId: number
   ) => Promise<CanonicalEntityDeleteResult>;
+  onCreateCanonicalEntityDraft: () => CanonicalEntity | null;
   onCanonicalEntitiesManagerClose: (shouldRefreshNodes: boolean) => void | Promise<void>;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
@@ -99,6 +100,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   onSelectedNodeSave,
   onCanonicalEntitiesChange,
   onCanonicalEntityDelete,
+  onCreateCanonicalEntityDraft,
   onCanonicalEntitiesManagerClose,
   onUploadImage,
 }) => {
@@ -256,6 +258,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         <CanonicalEntityManager
           entities={canonicalEntities}
           createRequestToken={canonicalEntityCreateRequestToken}
+          onCreateEntityDraft={onCreateCanonicalEntityDraft}
           onClose={closeCanonicalEntitiesDialog}
           onChange={onCanonicalEntitiesChange}
           onDelete={onCanonicalEntityDelete}

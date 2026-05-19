@@ -61,7 +61,7 @@ interface InvestigationBoardWorkspaceProps {
   onSelectedNodeSave: (
     id: number,
     patch: {
-      ce_id: string;
+      ce_id: number;
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => Promise<void>;

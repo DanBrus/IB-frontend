@@ -48,7 +48,7 @@ export type BoardChunk = {
 
 export type BoardNode = {
   node_id: number;
-  ce_id: string;
+  ce_id: number | null;
   name: string;
   pos_x: number;
   pos_y: number;
@@ -72,14 +72,15 @@ export type BoardVersion = {
 };
 
 export type CanonicalEntity = {
-  en_id: string;
+  en_id: number;
   name: string;
   entity_type: BoardNodeType;
   picture_paths: string[];
-  merged_to?: string | null;
+  merged_to?: number | null;
 };
 
 export type FreeIds = {
+  ce_id: number;
   node_id: number;
   edge_id: number;
   chunk_id: number;

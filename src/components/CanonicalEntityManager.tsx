@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
 import {
-  createEmptyCanonicalEntity,
+  formatCanonicalEntityId,
   getCanonicalEntityMergeTarget,
   getCanonicalEntityPicturePath,
   isCanonicalEntityMerged,
@@ -23,9 +23,10 @@ type EntityEditorState = {
 interface CanonicalEntityManagerProps {
   entities: CanonicalEntity[];
   createRequestToken: number;
+  onCreateEntityDraft: () => CanonicalEntity | null;
   onClose: (options?: { shouldRefreshNodes: boolean }) => void;
   onChange: (entities: CanonicalEntity[]) => Promise<CanonicalEntitiesSyncResult>;
-  onDelete: (entityId: string) => Promise<CanonicalEntityDeleteResult>;
+  onDelete: (entityId: number) => Promise<CanonicalEntityDeleteResult>;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
@@ -34,7 +35,7 @@ interface CanonicalEntityEditorDialogProps {
   isNew: boolean;
   existingEntities: CanonicalEntity[];
   onClose: () => void;
-  onSave: (nextEntity: CanonicalEntity, previousEntityId: string | null) => Promise<void>;
+  onSave: (nextEntity: CanonicalEntity, previousEntityId: number | null) => Promise<void>;
   onDelete?: (() => Promise<CanonicalEntityDeleteResult>) | null;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
@@ -92,9 +93,11 @@ function buildGroupedEntities(entities: CanonicalEntity[], searchTerm: string) {
 
     const haystack = [
       entity.name,
-      entity.en_id,
+      String(entity.en_id),
+      formatCanonicalEntityId(entity.en_id),
       entity.entity_type,
-      getCanonicalEntityMergeTarget(entity) ?? "",
+      String(getCanonicalEntityMergeTarget(entity) ?? ""),
+      formatCanonicalEntityId(getCanonicalEntityMergeTarget(entity)),
     ]
       .map((value) => normalizeSearchValue(value))
       .join(" ");
@@ -124,11 +127,10 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   onDelete,
   onUploadImage,
 }) => {
-  const [entityId, setEntityId] = useState(entity.en_id);
   const [name, setName] = useState(entity.name);
   const [entityType, setEntityType] = useState<BoardNodeType>(entity.entity_type);
-  const [mergedTo, setMergedTo] = useState(
-    getCanonicalEntityMergeTarget(entity) ?? ""
+  const [mergedTo, setMergedTo] = useState<number | null>(
+    getCanonicalEntityMergeTarget(entity)
   );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -230,29 +232,15 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   };
 
   const handleSave = async () => {
-    const trimmedEntityId = entityId.trim();
     const trimmedName = name.trim();
-    const normalizedMergedTo = mergedTo.trim() || null;
-
-    if (!trimmedEntityId) {
-      setError("У сущности должен быть en_id.");
-      return;
-    }
+    const normalizedMergedTo = mergedTo;
 
     if (!trimmedName) {
       setError("У сущности должно быть имя.");
       return;
     }
 
-    const duplicate = existingEntities.find(
-      (existingEntity) => existingEntity.en_id === trimmedEntityId && existingEntity.en_id !== entity.en_id
-    );
-    if (duplicate) {
-      setError(`Сущность с en_id "${trimmedEntityId}" уже существует.`);
-      return;
-    }
-
-    if (normalizedMergedTo === trimmedEntityId) {
+    if (normalizedMergedTo === entity.en_id) {
       setError("Сущность не может быть merged сама в себя.");
       return;
     }
@@ -282,7 +270,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
 
       await onSave(
         {
-          en_id: trimmedEntityId,
+          en_id: entity.en_id,
           name: trimmedName,
           entity_type: entityType,
           picture_paths: picturePaths,
@@ -301,7 +289,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
     if (!onDelete) return;
 
     const confirmed = window.confirm(
-      `Удалить canonical entity "${entity.name || entity.en_id}"?`
+      `Удалить canonical entity "${entity.name || formatCanonicalEntityId(entity.en_id)}"?`
     );
     if (!confirmed) return;
 
@@ -395,26 +383,6 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
         {error && <div style={{ fontSize: 12, color: "#b00020", whiteSpace: "pre-wrap" }}>{error}</div>}
 
         <label style={{ fontSize: 12, fontWeight: 600 }}>
-          en_id
-          <input
-            type="text"
-            value={entityId}
-            disabled={saving || deleting || !isNew}
-            onChange={(event) => setEntityId(event.target.value)}
-            style={{
-              width: "100%",
-              marginTop: 4,
-              padding: "6px 8px",
-              fontSize: 13,
-              borderRadius: 6,
-              border: "1px solid #ccc",
-              boxSizing: "border-box",
-              backgroundColor: saving || deleting || !isNew ? "#f2f2f2" : "#fff",
-            }}
-          />
-        </label>
-
-        <label style={{ fontSize: 12, fontWeight: 600 }}>
           Имя
           <input
             type="text"
@@ -462,9 +430,13 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
         <label style={{ fontSize: 12, fontWeight: 600 }}>
           merged_to
           <select
-            value={mergedTo}
+            value={mergedTo === null ? "" : String(mergedTo)}
             disabled={saving || deleting}
-            onChange={(event) => setMergedTo(event.target.value)}
+            onChange={(event) =>
+              setMergedTo(
+                event.target.value === "" ? null : Number(event.target.value)
+              )
+            }
             style={{
               width: "100%",
               marginTop: 4,
@@ -478,8 +450,8 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
           >
             <option value="">Не merged</option>
             {availableMergeTargets.map((candidate) => (
-              <option key={candidate.en_id} value={candidate.en_id}>
-                {candidate.name} ({candidate.entity_type}) [{candidate.en_id}]
+              <option key={candidate.en_id} value={String(candidate.en_id)}>
+                {candidate.name} ({candidate.entity_type}) [{formatCanonicalEntityId(candidate.en_id)}]
               </option>
             ))}
           </select>
@@ -700,6 +672,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
 export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   entities,
   createRequestToken,
+  onCreateEntityDraft,
   onClose,
   onChange,
   onDelete,
@@ -709,8 +682,6 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<StatusTone>("info");
   const [editorState, setEditorState] = useState<EntityEditorState>(null);
-  const [shouldRefreshNodesOnClose, setShouldRefreshNodesOnClose] =
-    useState(false);
   const handledCreateRequestTokenRef = useRef<number | null>(null);
 
   const groupedEntities = useMemo(() => buildGroupedEntities(entities, search), [entities, search]);
@@ -718,16 +689,22 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   useEffect(() => {
     if (createRequestToken <= 0 || handledCreateRequestTokenRef.current === createRequestToken) return;
 
+    const nextEntityDraft = onCreateEntityDraft();
+    if (!nextEntityDraft) return;
+
     handledCreateRequestTokenRef.current = createRequestToken;
     setEditorState({
-      entity: createEmptyCanonicalEntity(entities),
+      entity: nextEntityDraft,
       isNew: true,
     });
-  }, [createRequestToken, entities]);
+  }, [createRequestToken, onCreateEntityDraft]);
 
   const openCreateEntityEditor = () => {
+    const nextEntityDraft = onCreateEntityDraft();
+    if (!nextEntityDraft) return;
+
     setEditorState({
-      entity: createEmptyCanonicalEntity(entities),
+      entity: nextEntityDraft,
       isNew: true,
     });
   };
@@ -739,25 +716,21 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
     });
   };
 
-  const handleSaveEntity = async (nextEntity: CanonicalEntity, previousEntityId: string | null) => {
+  const handleSaveEntity = async (nextEntity: CanonicalEntity, previousEntityId: number | null) => {
     const nextEntities = sortCanonicalEntities(
-      previousEntityId
+      previousEntityId !== null
         ? entities.map((entity) => (entity.en_id === previousEntityId ? nextEntity : entity))
         : [...entities, nextEntity]
     );
 
     const syncResult = await onChange(nextEntities);
 
-    if (previousEntityId !== null && syncResult.persisted) {
-      setShouldRefreshNodesOnClose(true);
-    }
-
     setStatusTone(syncResult.persisted ? "success" : "info");
     setStatusMessage(
       syncResult.persisted
         ? previousEntityId === null
-          ? "Новая canonical entity сохранена на сервере."
-          : "Canonical entity сохранена на сервере. После закрытия окна ноды будут перечитаны."
+          ? "Новая canonical entity сохранена на сервере и список перечитан."
+          : "Canonical entity сохранена на сервере. Данные перечитаны."
         : previousEntityId === null
           ? "Новая сущность добавлена локально. Серверный sync пока работает в placeholder-режиме."
           : "Изменения сущности сохранены локально. Серверный sync пока работает в placeholder-режиме."
@@ -766,7 +739,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   };
 
   const handleDeleteEntity = async (
-    entityId: string
+    entityId: number
   ): Promise<CanonicalEntityDeleteResult> => {
     const deleteResult = await onDelete(entityId);
 
@@ -787,7 +760,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   };
 
   const handleClose = () => {
-    onClose({ shouldRefreshNodes: shouldRefreshNodesOnClose });
+    onClose({ shouldRefreshNodes: false });
   };
 
   return (
@@ -877,7 +850,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
                 type="search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Фильтр по имени, типу или en_id"
+                placeholder="Фильтр по имени, типу или ce-id"
                 style={{
                   width: "100%",
                   marginTop: 4,
@@ -998,7 +971,9 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
                               >
                                 {entity.name || "Без имени"}
                               </div>
-                              <div style={{ fontSize: 12, color: "#666" }}>{entity.en_id}</div>
+                              <div style={{ fontSize: 12, color: "#666" }}>
+                                {formatCanonicalEntityId(entity.en_id)}
+                              </div>
                               {mergedTarget && (
                                 <div
                                   style={{
@@ -1008,7 +983,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
                                     letterSpacing: "0.08em",
                                   }}
                                 >
-                                  MERGED {"->"} {mergedTarget}
+                                  MERGED {"->"} {formatCanonicalEntityId(mergedTarget)}
                                 </div>
                               )}
                               <div style={{ marginTop: "auto", fontSize: 12, color: "#444" }}>{entity.entity_type}</div>

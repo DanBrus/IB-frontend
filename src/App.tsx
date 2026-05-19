@@ -192,17 +192,23 @@ export default function App() {
     nextEntities: CanonicalEntity[]
   ): Promise<CanonicalEntitiesSyncResult> => {
     const syncResult = await boardDataSource.updateCanonicalEntities(BOARD_ID, nextEntities);
-    setCanonicalEntities(nextEntities);
+    if (syncResult.persisted) {
+      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, currentVersion);
+      applyBoardSnapshot(snapshot);
+    } else {
+      setCanonicalEntities(nextEntities);
+    }
     return syncResult;
   };
 
   const handleCanonicalEntityDelete = async (
-    entityId: string
+    entityId: number
   ): Promise<CanonicalEntityDeleteResult> => {
     const deleteResult = await boardDataSource.deleteCanonicalEntity(BOARD_ID, entityId);
 
     if (deleteResult.outcome === "deleted") {
-      setCanonicalEntities((prev) => prev.filter((entity) => entity.en_id !== entityId));
+      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, currentVersion);
+      applyBoardSnapshot(snapshot);
     }
 
     return deleteResult;

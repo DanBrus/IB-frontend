@@ -3,6 +3,7 @@ import { InvestigationBoard } from "./InvestigationBoard";
 import type { EditableBoardDescriptionSheet } from "./boardDescription";
 import { buildDescriptionAssignments } from "./boardDescription";
 import {
+  createEmptyCanonicalEntity,
   getCanonicalEntityPicturePath,
   sortCanonicalEntities,
 } from "./canonicalEntities";
@@ -51,33 +52,9 @@ interface InvestigationBoardScreenProps {
     entities: CanonicalEntity[]
   ) => Promise<CanonicalEntitiesSyncResult>;
   onCanonicalEntityDelete: (
-    entityId: string
+    entityId: number
   ) => Promise<CanonicalEntityDeleteResult>;
   onRequestEditMode: () => void;
-}
-
-function mergeRefreshedNodes(currentNodes: BoardNode[], refreshedNodes: BoardNode[]): BoardNode[] {
-  const refreshedNodesById = new Map(
-    refreshedNodes.map((node) => [node.node_id, node] as const)
-  );
-
-  const mergedNodes = currentNodes.map((node) => {
-    const refreshedNode = refreshedNodesById.get(node.node_id);
-    if (!refreshedNode) return node;
-
-    refreshedNodesById.delete(node.node_id);
-    return {
-      ...node,
-      ce_id: refreshedNode.ce_id,
-      name: refreshedNode.name,
-      node_type: refreshedNode.node_type,
-      picture_path: refreshedNode.picture_path,
-    };
-  });
-
-  return [...mergedNodes, ...refreshedNodesById.values()].sort(
-    (left, right) => left.node_id - right.node_id
-  );
 }
 
 export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> = ({
@@ -122,7 +99,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   }, [nodes]);
 
   const canonicalEntitiesById = useMemo(() => {
-    const map = new Map<string, CanonicalEntity>();
+    const map = new Map<number, CanonicalEntity>();
     canonicalEntities.forEach((entity) => map.set(entity.en_id, entity));
     return map;
   }, [canonicalEntities]);
@@ -267,7 +244,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
 
     setDraftNode({
       node_id: allocateNextFreeId("node_id"),
-      ce_id: "",
+      ce_id: null,
       name: "",
       pos_x: x,
       pos_y: y,
@@ -365,7 +342,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   const handleSelectedNodeSave = async (
     id: number,
     patch: {
-      ce_id: string;
+      ce_id: number;
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => {
@@ -446,42 +423,28 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
 
     const sortedEntities = sortCanonicalEntities(nextEntities);
     const syncResult = await onCanonicalEntitiesChange(sortedEntities);
-    setCanonicalEntities(sortedEntities);
+    if (!syncResult.persisted) {
+      setCanonicalEntities(sortedEntities);
+    }
     return syncResult;
   };
 
+  const createCanonicalEntityDraft = (): CanonicalEntity | null => {
+    if (!ensureFreeIdsReady()) return null;
+    return createEmptyCanonicalEntity(allocateNextFreeId("ce_id"));
+  };
+
   const handleCanonicalEntityDelete = async (
-    entityId: string
+    entityId: number
   ): Promise<CanonicalEntityDeleteResult> => {
     if (!isEditMode) {
       throw new Error("Режим редактирования недоступен.");
     }
 
-    const deleteResult = await onCanonicalEntityDelete(entityId);
-    if (deleteResult.outcome === "deleted") {
-      setCanonicalEntities((prev) =>
-        prev.filter((entity) => entity.en_id !== entityId)
-      );
-    }
-
-    return deleteResult;
+    return onCanonicalEntityDelete(entityId);
   };
 
-  const refreshNodesFromServer = async () => {
-    const nextNodes = await boardDataSource.getNodes(BOARD_ID, currentVersion);
-    setNodes((prev) => mergeRefreshedNodes(prev, nextNodes));
-  };
-
-  const handleCanonicalEntitiesDialogClose = async (shouldRefreshNodes: boolean) => {
-    if (!shouldRefreshNodes) return;
-
-    try {
-      await refreshNodesFromServer();
-    } catch (error) {
-      console.error("[InvestigationBoardScreen] Не удалось обновить ноды после CE", error);
-      window.alert("Не удалось перечитать ноды после изменения canonical entity.");
-    }
-  };
+  const handleCanonicalEntitiesDialogClose = async () => undefined;
 
   const handleVersionChange = (version: number) => onChangeVersion(version);
 
@@ -534,6 +497,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       onSelectedNodeSave={handleSelectedNodeSave}
       onCanonicalEntitiesChange={handleCanonicalEntitiesSave}
       onCanonicalEntityDelete={handleCanonicalEntityDelete}
+      onCreateCanonicalEntityDraft={createCanonicalEntityDraft}
       onCanonicalEntitiesManagerClose={handleCanonicalEntitiesDialogClose}
       onUploadImage={handleUploadImage}
     />
