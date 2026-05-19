@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { InvestigationBoard } from "./InvestigationBoard";
-import type { BoardNode, BoardEdge, BoardVersion, BoardNodeType, BoardAccessMode } from "./boardTypes";
+import type { EditableBoardDescriptionSheet } from "./boardDescription";
+import { buildDescriptionAssignments } from "./boardDescription";
+import { sortCanonicalEntities } from "./canonicalEntities";
+import type {
+  BoardAccessMode,
+  BoardEdge,
+  BoardNode,
+  BoardNodeType,
+  BoardVersion,
+  CanonicalEntity,
+} from "./boardTypes";
 import { BOARD_NODE_TYPES } from "./boardTypes";
 import type { BoardMode } from "./components/BoardToolbar";
 import { boardDataSource } from "./boardDataSource";
@@ -10,18 +20,20 @@ interface InvestigationBoardScreenProps {
   title?: string;
   initialNodes: BoardNode[];
   initialEdges: BoardEdge[];
+  initialCanonicalEntities: CanonicalEntity[];
   versions: BoardVersion[];
-  currentVersion: string;
+  currentVersion: number;
   accessMode: BoardAccessMode;
-  onChangeVersion: (version: string) => void;
+  onChangeVersion: (version: number) => void;
   onCreateVersion: (payload: {
-    version: string;
+    version: number;
     name: string;
     description: string;
     is_published?: boolean | null;
   }) => Promise<void>;
-  onDeleteVersion: (version: string) => Promise<void>;
-  onCurrentVersionPublicationChange: (version: string, isPublished: boolean) => void;
+  onDeleteVersion: (version: number) => Promise<void>;
+  onCurrentVersionPublicationChange: (version: number, isPublished: boolean) => void;
+  onCanonicalEntitiesChange: (entities: CanonicalEntity[]) => Promise<void>;
   onRequestEditMode: () => void;
 }
 
@@ -29,6 +41,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   title = "Доска расследований",
   initialNodes,
   initialEdges,
+  initialCanonicalEntities,
   versions,
   currentVersion,
   accessMode,
@@ -36,10 +49,14 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   onCreateVersion,
   onDeleteVersion,
   onCurrentVersionPublicationChange,
+  onCanonicalEntitiesChange,
   onRequestEditMode,
 }) => {
   const [nodes, setNodes] = useState<BoardNode[]>(initialNodes);
   const [edges, setEdges] = useState<BoardEdge[]>(initialEdges);
+  const [canonicalEntities, setCanonicalEntities] = useState<CanonicalEntity[]>(() =>
+    sortCanonicalEntities(initialCanonicalEntities)
+  );
 
   const [mode, setMode] = useState<BoardMode>("idle");
   const [edgeActionFirstNodeId, setEdgeActionFirstNodeId] = useState<number | null>(null);
@@ -51,13 +68,17 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
 
   const nodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
-    nodes.forEach((n) => map.set(n.node_id, n));
+    nodes.forEach((node) => map.set(node.node_id, node));
     return map;
   }, [nodes]);
 
   useEffect(() => {
     setIsPublished(Boolean(initialIsPublished));
   }, [currentVersion, initialIsPublished]);
+
+  useEffect(() => {
+    setCanonicalEntities(sortCanonicalEntities(initialCanonicalEntities));
+  }, [initialCanonicalEntities]);
 
   const selectedNode = selectedNodeId !== null ? nodesById.get(selectedNodeId) ?? null : null;
   const isEditMode = accessMode === "edit";
@@ -100,10 +121,9 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   };
 
   const handleBoardClick = (x: number, y: number) => {
-    if (!isEditMode) return;
-    if (mode !== "add-node") return;
+    if (!isEditMode || mode !== "add-node") return;
 
-    const maxId = nodes.length > 0 ? nodes.reduce((m, n) => (n.node_id > m ? n.node_id : m), nodes[0].node_id) : 0;
+    const maxId = nodes.length > 0 ? nodes.reduce((maxIdSoFar, node) => Math.max(maxIdSoFar, node.node_id), 0) : 0;
     const newId = maxId + 1;
 
     setNodes((prev) => [
@@ -114,7 +134,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
         pos_x: x,
         pos_y: y,
         node_type: BOARD_NODE_TYPES[0],
-        description: "",
+        description: [],
         picture_path: null,
       },
     ]);
@@ -126,9 +146,10 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
     if (!isEditMode) return;
 
     if (mode === "delete-node") {
-      setNodes((prev) => prev.filter((n) => n.node_id !== node.node_id));
-      setEdges((prev) => prev.filter((e) => e.node1 !== node.node_id && e.node2 !== node.node_id));
+      setNodes((prev) => prev.filter((item) => item.node_id !== node.node_id));
+      setEdges((prev) => prev.filter((edge) => edge.node1 !== node.node_id && edge.node2 !== node.node_id));
       setMode("idle");
+      if (selectedNodeId === node.node_id) setSelectedNodeId(null);
       return;
     }
 
@@ -150,13 +171,23 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
         if (fromId === toId) return;
 
         const exists = edges.some(
-          (e) => (e.node1 === fromId && e.node2 === toId) || (e.node1 === toId && e.node2 === fromId)
+          (edge) =>
+            (edge.node1 === fromId && edge.node2 === toId) ||
+            (edge.node1 === toId && edge.node2 === fromId)
         );
         if (exists) return;
 
-        const maxEdgeId = edges.length > 0 ? edges.reduce((m, e) => (e.edge_id > m ? e.edge_id : m), edges[0].edge_id) : 0;
+        const maxEdgeId = edges.length > 0 ? edges.reduce((maxIdSoFar, edge) => Math.max(maxIdSoFar, edge.edge_id), 0) : 0;
 
-        setEdges((prev) => [...prev, { edge_id: maxEdgeId + 1, node1: fromId, node2: toId }]);
+        setEdges((prev) => [
+          ...prev,
+          {
+            edge_id: maxEdgeId + 1,
+            node1: fromId,
+            node2: toId,
+            description: [],
+          },
+        ]);
       }
       return;
     }
@@ -165,62 +196,84 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       if (edgeActionFirstNodeId === null) {
         setEdgeActionFirstNodeId(node.node_id);
       } else {
-        const n1 = edgeActionFirstNodeId;
-        const n2 = node.node_id;
+        const node1 = edgeActionFirstNodeId;
+        const node2 = node.node_id;
 
         resetEdgeAction();
         setMode("idle");
 
         const edgeToDelete = edges.find(
-          (e) => (e.node1 === n1 && e.node2 === n2) || (e.node1 === n2 && e.node2 === n1)
+          (edge) =>
+            (edge.node1 === node1 && edge.node2 === node2) ||
+            (edge.node1 === node2 && edge.node2 === node1)
         );
-        if (edgeToDelete) setEdges((prev) => prev.filter((e) => e.edge_id !== edgeToDelete.edge_id));
+        if (edgeToDelete) setEdges((prev) => prev.filter((edge) => edge.edge_id !== edgeToDelete.edge_id));
       }
-      return;
     }
   };
 
   const handleNodePositionChange = (id: number, pos_x: number, pos_y: number) => {
-    setNodes((prev) => prev.map((n) => (n.node_id === id ? { ...n, pos_x, pos_y } : n)));
+    setNodes((prev) => prev.map((node) => (node.node_id === id ? { ...node, pos_x, pos_y } : node)));
   };
 
-  // PATCH узла (включая picture_path) — async, чтобы инспектор мог await
   const handleSelectedNodeSave = async (
     id: number,
-    patch: { name: string; description: string; node_type: BoardNodeType; picture_path?: string | null }
+    patch: {
+      name: string;
+      descriptionSheets: EditableBoardDescriptionSheet[];
+      node_type: BoardNodeType;
+    }
   ) => {
     if (!isEditMode) return;
 
+    const { nodeChunks, edgeChunksByEdgeId } = buildDescriptionAssignments(id, edges, patch.descriptionSheets);
+
     setNodes((prev) =>
-      prev.map((n) =>
-        n.node_id === id
+      prev.map((node) =>
+        node.node_id === id
           ? {
-              ...n,
+              ...node,
               name: patch.name,
-              description: patch.description,
               node_type: patch.node_type,
-              ...(patch.picture_path !== undefined ? { picture_path: patch.picture_path } : {}),
+              description: nodeChunks,
             }
-          : n
+          : node
+      )
+    );
+
+    setEdges((prev) =>
+      prev.map((edge) =>
+        edgeChunksByEdgeId.has(edge.edge_id)
+          ? {
+              ...edge,
+              description: edgeChunksByEdgeId.get(edge.edge_id) ?? [],
+            }
+          : edge
       )
     );
   };
 
-  // Upload blob → {id,url}
   const handleUploadImage = (blob: Blob) => {
     if (!isEditMode) {
       return Promise.reject(new Error("Режим редактирования недоступен."));
     }
 
-    // filename не критичен, но пусть будет
-    return fileDataSource.uploadImage(blob, "node.png");
+    return fileDataSource.uploadImage(blob, "canonical-entity.png");
   };
 
-  const handleVersionChange = (version: string) => onChangeVersion(version);
+  const handleCanonicalEntitiesSave = async (nextEntities: CanonicalEntity[]) => {
+    if (!isEditMode) return;
+
+    const sortedEntities = sortCanonicalEntities(nextEntities);
+    setCanonicalEntities(sortedEntities);
+    await onCanonicalEntitiesChange(sortedEntities);
+  };
+
+  const handleVersionChange = (version: number) => onChangeVersion(version);
 
   const handlePublish = async () => {
-    if (!isEditMode) return;
-    if (isPublishing) return;
+    if (!isEditMode || isPublishing) return;
+
     setIsPublishing(true);
     try {
       await boardDataSource.updateBoard({
@@ -232,6 +285,8 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
         is_published: isPublished,
       });
       onCurrentVersionPublicationChange(currentVersion, isPublished);
+    } catch (e: unknown) {
+      window.alert(e instanceof Error ? e.message : "Не удалось сохранить текущую версию.");
     } finally {
       setIsPublishing(false);
     }
@@ -242,6 +297,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       title={title}
       nodes={nodes}
       edges={edges}
+      canonicalEntities={canonicalEntities}
       mode={mode}
       selectedNode={selectedNode}
       versions={versions}
@@ -263,6 +319,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       onNodeClick={handleNodeClick}
       onNodePositionChange={handleNodePositionChange}
       onSelectedNodeSave={handleSelectedNodeSave}
+      onCanonicalEntitiesChange={handleCanonicalEntitiesSave}
       onUploadImage={handleUploadImage}
     />
   );

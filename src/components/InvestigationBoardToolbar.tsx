@@ -15,6 +15,8 @@ interface InvestigationBoardToolbarProps {
   onCurrentVersionPublishedChange: (value: boolean) => void;
   onNewVersionClick: () => void;
   onDeleteVersionClick: () => void;
+  onCanonicalEntitiesClick: () => void;
+  onCreateCanonicalEntityClick: () => void;
   canDeleteVersion: boolean;
 }
 

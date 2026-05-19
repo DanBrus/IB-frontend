@@ -1,98 +1,72 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import Cropper from "react-easy-crop";
-import { BOARD_NODE_TYPES, normalizeNodeType, type BoardNode, type BoardNodeType } from "../boardTypes";
-import { FILE_RES_BASE_URL } from "../fileDataSource";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  BOARD_NODE_TYPES,
+  normalizeNodeType,
+  type BoardNode,
+  type BoardNodeType,
+} from "../boardTypes";
+import type { BoardDescriptionSheet, EditableBoardDescriptionSheet } from "../boardDescription";
+import {
+  createEmptyDescriptionSheet,
+  getSheetSourceLabel,
+  toEditableDescriptionSheets,
+  truncateSheetSourceLabel,
+} from "../boardDescription";
+import "./NodeCard.css";
 import {
   clampInspectorPanelWidth,
   DESKTOP_INSPECTOR_PANEL_DEFAULT_WIDTH,
 } from "./panelSizing";
 
-type Area = { x: number; y: number; width: number; height: number };
 type DesktopResizeState = {
   pointerId: number;
   startX: number;
   startWidth: number;
 } | null;
 
+type SheetEditorState = {
+  draft: EditableBoardDescriptionSheet;
+  isNew: boolean;
+} | null;
+
 interface NodeInspectorProps {
   node: BoardNode | null;
-
-  // Сохранение полей узла (локально, после upload)
+  descriptionSheets: BoardDescriptionSheet[];
+  connectedNodes: BoardNode[];
   onSaveNode: (
     id: number,
-    patch: { name: string; description: string; node_type: BoardNodeType; picture_path?: string | null }
+    patch: {
+      name: string;
+      descriptionSheets: EditableBoardDescriptionSheet[];
+      node_type: BoardNodeType;
+    }
   ) => Promise<void>;
-
-  // Upload кропнутой картинки → возвращает {id,url}, нам нужен id
-  onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
 const MAX_NAME_LEN = 64;
-const TARGET_SIZE = 512;
 
-function clampName(s: string) {
-  return s.length > MAX_NAME_LEN ? s.slice(0, MAX_NAME_LEN) : s;
+function clampName(value: string) {
+  return value.length > MAX_NAME_LEN ? value.slice(0, MAX_NAME_LEN) : value;
 }
 
-function createImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = url;
-  });
-}
-
-async function cropToSquare512(imageUrl: string, crop: Area, mime: "image/png" | "image/jpeg") {
-  const image = await createImage(imageUrl);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = TARGET_SIZE;
-  canvas.height = TARGET_SIZE;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas 2D context not available");
-
-  // crop coords are in pixels of displayed image source
-  const scaleX = image.naturalWidth / image.width;
-  const scaleY = image.naturalHeight / image.height;
-
-  const sx = crop.x * scaleX;
-  const sy = crop.y * scaleY;
-  const sWidth = crop.width * scaleX;
-  const sHeight = crop.height * scaleY;
-
-  ctx.drawImage(image, sx, sy, sWidth, sHeight, 0, 0, TARGET_SIZE, TARGET_SIZE);
-
-  const blob: Blob = await new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
-      mime,
-      mime === "image/jpeg" ? 0.9 : undefined
-    );
-  });
-
-  return blob;
+function cloneEditableSheet(sheet: EditableBoardDescriptionSheet): EditableBoardDescriptionSheet {
+  return {
+    ...sheet,
+    relatedNodeIds: [...sheet.relatedNodeIds],
+    c_ids: [...sheet.c_ids],
+  };
 }
 
 export const NodeInspector: React.FC<NodeInspectorProps> = ({
   node,
+  descriptionSheets,
+  connectedNodes,
   onSaveNode,
-  onUploadImage,
 }) => {
   const [name, setName] = useState("");
   const [nodeType, setNodeType] = useState<BoardNodeType>(BOARD_NODE_TYPES[0]);
-  const [description, setDescription] = useState("");
-
-  // image flow
-  const [imageChanged, setImageChanged] = useState(false);
-  const [pickedFileName, setPickedFileName] = useState<string>("image.png");
-  const [imageSrcForCrop, setImageSrcForCrop] = useState<string | null>(null); // objectURL
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [croppedBlob, setCroppedBlob] = useState<Blob | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null); // objectURL of cropped blob
-
+  const [sheets, setSheets] = useState<EditableBoardDescriptionSheet[]>([]);
+  const [sheetEditor, setSheetEditor] = useState<SheetEditorState>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [desktopWidth, setDesktopWidth] = useState(() =>
@@ -100,38 +74,27 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   );
   const [desktopResizeState, setDesktopResizeState] = useState<DesktopResizeState>(null);
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // current node image (server)
-  const currentImgUrl = useMemo(() => {
-    if (!node?.picture_path) return null;
-    return `${FILE_RES_BASE_URL}/res/${node.picture_path}`;
-  }, [node?.picture_path]);
+  const connectedNodesById = useMemo(() => {
+    const map = new Map<number, BoardNode>();
+    connectedNodes.forEach((connectedNode) => map.set(connectedNode.node_id, connectedNode));
+    return map;
+  }, [connectedNodes]);
 
   useEffect(() => {
     if (node) {
       setName(node.name ?? "");
       setNodeType(normalizeNodeType(node.node_type));
-      setDescription(node.description ?? "");
+      setSheets(toEditableDescriptionSheets(descriptionSheets));
     } else {
       setName("");
       setNodeType(BOARD_NODE_TYPES[0]);
-      setDescription("");
+      setSheets([]);
     }
 
-    // reset image draft when switching node
-    setImageChanged(false);
-    setPickedFileName("image.png");
-    setImageSrcForCrop(null);
-    setCroppedAreaPixels(null);
-    setCrop({ x: 0, y: 0 });
-    setZoom(1);
-    setCroppedBlob(null);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
+    setSheetEditor(null);
+    setSaving(false);
     setError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node?.node_id]);
+  }, [descriptionSheets, node]);
 
   useEffect(() => {
     const handleWindowResize = () => {
@@ -190,99 +153,129 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
     });
   };
 
-  const openFileDialog = () => {
-    fileInputRef.current?.click();
+  const openSheetEditor = (sheet: EditableBoardDescriptionSheet, isNew: boolean) => {
+    if (disabled) return;
+
+    setSheetEditor({
+      draft: cloneEditableSheet(sheet),
+      isNew,
+    });
   };
 
-  const acceptFile = (file: File) => {
-    if (!(file.type === "image/png" || file.type === "image/jpeg")) {
-      setError("Разрешены только PNG и JPEG.");
+  const handleAddSheet = () => {
+    if (disabled) return;
+    openSheetEditor(createEmptyDescriptionSheet(sheets), true);
+  };
+
+  const handleOpenExistingSheet = (sheetId: string) => {
+    const sheet = sheets.find((item) => item.id === sheetId);
+    if (!sheet) return;
+    openSheetEditor(sheet, false);
+  };
+
+  const handleSheetCardKeyDown = (
+    event: React.KeyboardEvent<HTMLDivElement>,
+    sheetId: string
+  ) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+
+    event.preventDefault();
+    handleOpenExistingSheet(sheetId);
+  };
+
+  const handleCloseSheetEditor = () => {
+    if (saving) return;
+    setSheetEditor(null);
+  };
+
+  const handleEditorDraftChange = (patch: Partial<EditableBoardDescriptionSheet>) => {
+    setSheetEditor((currentEditor) =>
+      currentEditor
+        ? {
+            ...currentEditor,
+            draft: {
+              ...currentEditor.draft,
+              ...patch,
+            },
+          }
+        : currentEditor
+    );
+  };
+
+  const handleEditorRelatedNodeToggle = (relatedNodeId: number) => {
+    setSheetEditor((currentEditor) => {
+      if (!currentEditor) return currentEditor;
+
+      const relatedNodeIds = new Set(currentEditor.draft.relatedNodeIds);
+      if (relatedNodeIds.has(relatedNodeId)) {
+        relatedNodeIds.delete(relatedNodeId);
+      } else {
+        relatedNodeIds.add(relatedNodeId);
+      }
+
+      return {
+        ...currentEditor,
+        draft: {
+          ...currentEditor.draft,
+          relatedNodeIds: connectedNodes
+            .map((connectedNode) => connectedNode.node_id)
+            .filter((nodeId) => relatedNodeIds.has(nodeId)),
+        },
+      };
+    });
+  };
+
+  const handleApplySheetEditor = () => {
+    if (!sheetEditor) return;
+
+    const normalizedSheet = {
+      ...sheetEditor.draft,
+      description: sheetEditor.draft.description.trim(),
+      timecode: sheetEditor.draft.timecode.trim(),
+      relatedNodeIds: [...sheetEditor.draft.relatedNodeIds],
+    };
+
+    if (!normalizedSheet.description) {
+      setError("У листка должен быть непустой текст.");
       return;
     }
 
     setError(null);
-    setPickedFileName(file.name || "image.png");
-
-    const url = URL.createObjectURL(file);
-    setImageSrcForCrop(url);
-    setCroppedAreaPixels(null);
-    setCrop({ x: 0, y: 0 });
-    setZoom(1);
-    setCroppedBlob(null);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
-    setImageChanged(true);
+    setSheets((prev) =>
+      sheetEditor.isNew
+        ? [...prev, normalizedSheet]
+        : prev.map((sheet) => (sheet.id === normalizedSheet.id ? normalizedSheet : sheet))
+    );
+    setSheetEditor(null);
   };
 
-  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (disabled) return;
+  const handleDeleteSheet = () => {
+    if (!sheetEditor) return;
 
-    const file = e.dataTransfer.files?.[0];
-    if (file) acceptFile(file);
-  };
-
-  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  };
-
-  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (file) acceptFile(file);
-  };
-
-  const onCropComplete = (_: Area, croppedPixels: Area) => {
-    setCroppedAreaPixels(croppedPixels);
-  };
-
-  const applyCrop = async () => {
-    if (!imageSrcForCrop || !croppedAreaPixels) return;
-
-    setError(null);
-    try {
-      // MIME: сохраняем png для предсказуемости (можно менять на jpeg)
-      const mime: "image/png" | "image/jpeg" = "image/png";
-      const blob = await cropToSquare512(imageSrcForCrop, croppedAreaPixels, mime);
-
-      setCroppedBlob(blob);
-
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      const p = URL.createObjectURL(blob);
-      setPreviewUrl(p);
-    } catch (e) {
-      setError("Не удалось обрезать изображение.");
+    if (!sheetEditor.isNew) {
+      setSheets((prev) => prev.filter((sheet) => sheet.id !== sheetEditor.draft.id));
     }
+    setSheetEditor(null);
   };
 
   const handleSave = async () => {
     if (!node) return;
+    if (sheetEditor) {
+      setError("Сначала сохраните или отмените редактирование открытого листка.");
+      return;
+    }
+
     setError(null);
     setSaving(true);
 
     try {
-      let picture_id: string | null | undefined = undefined;
-
-      // Если картинка менялась — грузим именно кропнутый blob
-      if (imageChanged) {
-        if (!croppedBlob) {
-          throw new Error("Сначала примените обрезку изображения.");
-        }
-        const resp = await onUploadImage(croppedBlob);
-        picture_id = resp.id; // В НОДУ КЛАДЁМ ТОЛЬКО id
-      }
-
       await onSaveNode(node.node_id, {
         name: clampName(name),
         node_type: nodeType,
-        description,
-        ...(imageChanged ? { picture_path: picture_id ?? null } : {}),
+        descriptionSheets: sheets,
       });
-
-      // после успешного сохранения считаем, что изменений картинки нет
-      setImageChanged(false);
-    } catch (e: any) {
-      setError(e?.message ? String(e.message) : "Ошибка сохранения.");
+    } catch (saveError: unknown) {
+      setError(saveError instanceof Error ? saveError.message : "Ошибка сохранения.");
     } finally {
       setSaving(false);
     }
@@ -339,7 +332,26 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
           paddingRight: 2,
         }}
       >
-        <div style={{ fontWeight: 700, fontSize: 14 }}>Инспектор узла</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>Инспектор узла</div>
+          <button
+            type="button"
+            onClick={handleAddSheet}
+            disabled={!node || saving}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 6,
+              border: "1px solid #bbb",
+              backgroundColor: !node || saving ? "#f2f2f2" : "#fff",
+              color: !node || saving ? "#777" : "#333",
+              cursor: !node || saving ? "default" : "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            Новый листок
+          </button>
+        </div>
 
         {!node && (
           <div style={{ fontSize: 13, opacity: 0.6 }}>
@@ -353,7 +365,6 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
           </div>
         )}
 
-        {/* Имя */}
         <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
           Имя (до 64 символов)
           <input
@@ -361,7 +372,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             value={name}
             maxLength={MAX_NAME_LEN}
             disabled={disabled}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(event) => setName(event.target.value)}
             style={{
               width: "100%",
               marginTop: 4,
@@ -370,17 +381,17 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               borderRadius: 6,
               border: "1px solid #ccc",
               boxSizing: "border-box",
+              backgroundColor: disabled ? "#f2f2f2" : "#fff",
             }}
           />
         </label>
 
-        {/* Тип */}
         <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
           Тип узла
           <select
             value={nodeType}
             disabled={disabled}
-            onChange={(e) => setNodeType(e.target.value as BoardNodeType)}
+            onChange={(event) => setNodeType(event.target.value as BoardNodeType)}
             style={{
               width: "100%",
               marginTop: 4,
@@ -400,173 +411,69 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
           </select>
         </label>
 
-        {/* Описание */}
-        <label style={{ fontSize: 12, fontWeight: 600, opacity: disabled ? 0.6 : 0.9 }}>
-          Описание
-          <textarea
-            value={description}
-            disabled={disabled}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={6}
-            style={{
-              width: "100%",
-              marginTop: 4,
-              padding: "6px 8px",
-              fontSize: 13,
-              borderRadius: 6,
-              border: "1px solid #ccc",
-              boxSizing: "border-box",
-              resize: "vertical",
-            }}
-          />
-        </label>
-
-        {/* Картинка */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, opacity: disabled ? 0.6 : 0.9 }}>
-            Картинка (PNG/JPEG) — кроп 1:1, 512×512
-          </div>
-
-          {/* текущая/превью */}
-          <div
-            style={{
-              width: "100%",
-              aspectRatio: "1 / 1",
-              borderRadius: 8,
-              backgroundColor: "#000",
-              overflow: "hidden",
-              position: "relative",
-              border: "1px solid #ddd",
-            }}
-          >
-            {previewUrl ? (
-              <img
-                src={previewUrl}
-                alt=""
-                draggable={false}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-            ) : currentImgUrl ? (
-              <img
-                src={currentImgUrl}
-                alt=""
-                draggable={false}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-            ) : null}
-          </div>
-
-          {/* drop zone */}
-          <div
-            onDragOver={onDragOver}
-            onDrop={onDrop}
-            style={{
-              padding: "10px 10px",
-              borderRadius: 8,
-              border: "1px dashed #999",
-              backgroundColor: "#fff",
-              fontSize: 12,
-              opacity: disabled ? 0.6 : 1,
-            }}
-          >
-            Перетащите PNG/JPEG сюда или{" "}
-            <button
-              type="button"
-              onClick={openFileDialog}
-              disabled={disabled}
-              style={{
-                border: "none",
-                background: "none",
-                padding: 0,
-                color: "#0b57d0",
-                textDecoration: "underline",
-                cursor: disabled ? "default" : "pointer",
-                fontSize: 12,
-              }}
-            >
-              выберите файл
-            </button>
-            .
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg"
-              style={{ display: "none" }}
-              onChange={onPickFile}
-            />
-          </div>
-
-          {/* crop UI when file selected */}
-          {imageSrcForCrop && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div
-                style={{
-                  position: "relative",
-                  width: "100%",
-                  height: 220,
-                  background: "#111",
-                  borderRadius: 8,
-                  overflow: "hidden",
-                  border: "1px solid #ddd",
-                }}
-              >
-                <Cropper
-                  image={imageSrcForCrop}
-                  crop={crop}
-                  zoom={zoom}
-                  aspect={1}
-                  onCropChange={setCrop}
-                  onZoomChange={setZoom}
-                  onCropComplete={onCropComplete}
-                />
-              </div>
-
-              <label style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-                Zoom
-                <input
-                  type="range"
-                  min={1}
-                  max={3}
-                  step={0.01}
-                  value={zoom}
-                  disabled={disabled}
-                  onChange={(e) => setZoom(Number(e.target.value))}
-                  style={{ flexGrow: 1 }}
-                />
-              </label>
-
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  type="button"
-                  onClick={applyCrop}
-                  disabled={disabled || !croppedAreaPixels}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 6,
-                    border: "1px solid #555",
-                    backgroundColor: "#333",
-                    color: "#fff",
-                    cursor: disabled ? "default" : "pointer",
-                    fontSize: 13,
-                  }}
-                >
-                  Применить обрезку
-                </button>
-                <div style={{ fontSize: 12, opacity: 0.6, alignSelf: "center" }}>
-                  {pickedFileName}
-                </div>
-              </div>
-
-              {!croppedBlob && (
-                <div style={{ fontSize: 12, opacity: 0.6 }}>
-                  Чтобы сохранить, нажмите «Применить обрезку».
-                </div>
-              )}
-            </div>
-          )}
+        <div
+          style={{
+            borderRadius: 10,
+            border: "1px solid #ddd",
+            background: "#fff",
+            padding: "10px 12px",
+            fontSize: 12,
+            color: "#555",
+            lineHeight: 1.45,
+          }}
+        >
+          Картинка ноды теперь настраивается не здесь, а в окне управления canonical entities.
         </div>
 
-        {/* save */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 700 }}>Описание по чанкам</div>
+          <div style={{ fontSize: 11, opacity: 0.65 }}>Двойной клик открывает отдельное окно редактирования.</div>
+        </div>
+
+        <div className="paper-stack">
+          {node ? (
+            sheets.length > 0 ? (
+              sheets.map((sheet) => {
+                const fullSourceLabel = getSheetSourceLabel(
+                  sheet.relatedNodeIds
+                    .map((relatedNodeId) => connectedNodesById.get(relatedNodeId)?.name ?? "")
+                    .filter(Boolean)
+                );
+                const previewSourceLabel = truncateSheetSourceLabel(fullSourceLabel);
+
+                return (
+                  <article key={sheet.id} className="paper-note paper-note--editable">
+                    <div className="paper-note__margin" title={fullSourceLabel || undefined}>
+                      <div className="paper-note__sources">
+                        {previewSourceLabel ? (
+                          <div className="paper-note__source">{previewSourceLabel}</div>
+                        ) : (
+                          <div className="paper-note__source paper-note__source--empty">&nbsp;</div>
+                        )}
+                      </div>
+                    </div>
+                    <div
+                      className="paper-note__body"
+                      role="button"
+                      tabIndex={disabled ? -1 : 0}
+                      onDoubleClick={() => handleOpenExistingSheet(sheet.id)}
+                      onKeyDown={(event) => handleSheetCardKeyDown(event, sheet.id)}
+                    >
+                      <div className={`paper-note__text${sheet.description ? "" : " paper-note__text--empty"}`}>
+                        {sheet.description || "Пустой листок. Дважды щёлкните, чтобы заполнить его."}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })
+            ) : (
+              <div className="paper-stack__empty">
+                У этой ноды пока нет ни одного листка. Добавьте новый и распределите его по нужным связям.
+              </div>
+            )
+          ) : null}
+        </div>
+
         <button
           type="button"
           onClick={handleSave}
@@ -574,18 +481,260 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
           style={{
             marginTop: 4,
             alignSelf: "flex-start",
-            padding: "6px 12px",
+            padding: "8px 14px",
             fontSize: 13,
             borderRadius: 6,
             border: "1px solid #555",
             backgroundColor: !node || saving ? "#ddd" : "#333",
             color: !node || saving ? "#777" : "#f5f5f5",
             cursor: !node || saving ? "default" : "pointer",
+            fontWeight: 600,
           }}
         >
           {saving ? "Сохраняю…" : "Сохранить"}
         </button>
       </div>
+
+      {sheetEditor && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1200,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+          onClick={handleCloseSheetEditor}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "min(640px, calc(100vw - 40px))",
+              maxHeight: "min(680px, calc(100vh - 40px))",
+              overflowY: "auto",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: "#fff",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+              padding: "18px 20px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 16 }}>
+                  {sheetEditor.isNew ? "Новый листок" : "Редактирование листка"}
+                </div>
+                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.68 }}>
+                  Здесь можно изменить текст чанка, его приоритет и отметить связанные ноды галочками.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCloseSheetEditor}
+                disabled={saving}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #bbb",
+                  backgroundColor: "#fff",
+                  color: "#333",
+                  cursor: saving ? "default" : "pointer",
+                  fontSize: 13,
+                }}
+              >
+                Закрыть
+              </button>
+            </div>
+
+            <label style={{ fontSize: 12, fontWeight: 600 }}>
+              Текст листка
+              <textarea
+                value={sheetEditor.draft.description}
+                onChange={(event) => handleEditorDraftChange({ description: event.target.value })}
+                rows={8}
+                style={{
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                  borderRadius: 8,
+                  border: "1px solid #ccc",
+                  boxSizing: "border-box",
+                  resize: "vertical",
+                  backgroundColor: "#fff",
+                }}
+              />
+            </label>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+              <label style={{ fontSize: 12, fontWeight: 600 }}>
+                Приоритет
+                <input
+                  type="number"
+                  min={0}
+                  value={sheetEditor.draft.chunk_priority}
+                  onChange={(event) =>
+                    handleEditorDraftChange({
+                      chunk_priority: Number.isFinite(Number(event.target.value))
+                        ? Number(event.target.value)
+                        : 0,
+                    })
+                  }
+                  style={{
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "6px 8px",
+                    fontSize: 13,
+                    borderRadius: 6,
+                    border: "1px solid #ccc",
+                    boxSizing: "border-box",
+                    backgroundColor: "#fff",
+                  }}
+                />
+              </label>
+
+              <label style={{ fontSize: 12, fontWeight: 600 }}>
+                Timecode
+                <input
+                  type="text"
+                  value={sheetEditor.draft.timecode}
+                  onChange={(event) => handleEditorDraftChange({ timecode: event.target.value })}
+                  style={{
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "6px 8px",
+                    fontSize: 13,
+                    borderRadius: 6,
+                    border: "1px solid #ccc",
+                    boxSizing: "border-box",
+                    backgroundColor: "#fff",
+                  }}
+                />
+              </label>
+            </div>
+
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={sheetEditor.draft.isNodeOwned}
+                onChange={(event) => handleEditorDraftChange({ isNodeOwned: event.target.checked })}
+              />
+              <span>Сохранить этот чанк и как собственный текст текущей ноды</span>
+            </label>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700 }}>Связанные ноды</div>
+              <div
+                style={{
+                  border: "1px solid #ddd",
+                  borderRadius: 8,
+                  background: "#fff",
+                  padding: "10px 12px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                {connectedNodes.length > 0 ? (
+                  connectedNodes.map((connectedNode) => (
+                    <label
+                      key={connectedNode.node_id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        fontSize: 12,
+                        color: "#333",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={sheetEditor.draft.relatedNodeIds.includes(connectedNode.node_id)}
+                        onChange={() => handleEditorRelatedNodeToggle(connectedNode.node_id)}
+                      />
+                      <span>{connectedNode.name}</span>
+                    </label>
+                  ))
+                ) : (
+                  <div style={{ fontSize: 12, color: "#666" }}>
+                    У текущей ноды пока нет связанных соседей, поэтому листок можно сохранить только в неё саму.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <button
+                type="button"
+                onClick={handleDeleteSheet}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #b00020",
+                  backgroundColor: "#fff",
+                  color: "#b00020",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                {sheetEditor.isNew ? "Отменить новый листок" : "Удалить листок"}
+              </button>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={handleCloseSheetEditor}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    border: "1px solid #bbb",
+                    backgroundColor: "#f2f2f2",
+                    color: "#333",
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplySheetEditor}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #555",
+                    backgroundColor: "#333",
+                    color: "#f5f5f5",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 600,
+                  }}
+                >
+                  Применить
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

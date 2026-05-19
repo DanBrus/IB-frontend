@@ -1,6 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BoardMode } from "./BoardToolbar";
-import type { BoardNode, BoardEdge, BoardNodeType, BoardAccessMode } from "../boardTypes";
+import type { EditableBoardDescriptionSheet } from "../boardDescription";
+import { buildNodeDescriptionSheets, getConnectedNodes } from "../boardDescription";
+import type { BoardAccessMode, BoardEdge, BoardNode, BoardNodeType } from "../boardTypes";
 import { CARD_HEIGHT, CARD_WIDTH } from "../cardLayout";
 import { NodeCard } from "./NodeCard";
 import { EdgeLine } from "./EdgeLine";
@@ -43,9 +45,12 @@ interface InvestigationBoardWorkspaceProps {
   onNodePositionChange?: (id: number, x: number, y: number) => void;
   onSelectedNodeSave: (
     id: number,
-    patch: { name: string; description: string; node_type: BoardNodeType; picture_path?: string | null }
+    patch: {
+      name: string;
+      descriptionSheets: EditableBoardDescriptionSheet[];
+      node_type: BoardNodeType;
+    }
   ) => Promise<void>;
-  onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
 export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspaceProps> = ({
@@ -58,7 +63,6 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   onNodeClick,
   onNodePositionChange,
   onSelectedNodeSave,
-  onUploadImage,
 }) => {
   const isMobile = useIsMobile();
   const minScale = isMobile ? MOBILE_MIN_SCALE : DESKTOP_MIN_SCALE;
@@ -70,7 +74,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
 
   const nodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
-    nodes.forEach((n) => map.set(n.node_id, n));
+    nodes.forEach((node) => map.set(node.node_id, node));
     return map;
   }, [nodes]);
 
@@ -106,6 +110,18 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
 
   const readPanelNode =
     accessMode === "read" && readPanelNodeId !== null ? nodesById.get(readPanelNodeId) ?? null : null;
+  const readPanelSheets = useMemo(
+    () => buildNodeDescriptionSheets(readPanelNode, nodes, edges),
+    [readPanelNode, nodes, edges]
+  );
+  const selectedNodeSheets = useMemo(
+    () => buildNodeDescriptionSheets(selectedNode, nodes, edges),
+    [selectedNode, nodes, edges]
+  );
+  const connectedNodes = useMemo(
+    () => (selectedNode ? getConnectedNodes(selectedNode.node_id, nodes, edges) : []),
+    [selectedNode, nodes, edges]
+  );
 
   useEffect(() => {
     const nextDefaultScale = isMobile ? MOBILE_DEFAULT_SCALE : DESKTOP_DEFAULT_SCALE;
@@ -157,16 +173,19 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
     };
   };
 
-  const getVisibleWorldRect = (nextScale: number, nextScrollLeft: number, nextScrollTop: number, viewport: HTMLDivElement) => {
-    return {
-      left: nextScrollLeft / nextScale - boardBounds.canvasLeft,
-      top: nextScrollTop / nextScale - boardBounds.canvasTop,
-      right: (nextScrollLeft + viewport.clientWidth) / nextScale - boardBounds.canvasLeft,
-      bottom: (nextScrollTop + viewport.clientHeight) / nextScale - boardBounds.canvasTop,
-    };
-  };
+  const getVisibleWorldRect = (nextScale: number, nextScrollLeft: number, nextScrollTop: number, viewport: HTMLDivElement) => ({
+    left: nextScrollLeft / nextScale - boardBounds.canvasLeft,
+    top: nextScrollTop / nextScale - boardBounds.canvasTop,
+    right: (nextScrollLeft + viewport.clientWidth) / nextScale - boardBounds.canvasLeft,
+    bottom: (nextScrollTop + viewport.clientHeight) / nextScale - boardBounds.canvasTop,
+  });
 
-  const hasFullyVisibleNode = (nextScale: number, nextScrollLeft: number, nextScrollTop: number, viewport: HTMLDivElement) => {
+  const hasFullyVisibleNode = (
+    nextScale: number,
+    nextScrollLeft: number,
+    nextScrollTop: number,
+    viewport: HTMLDivElement
+  ) => {
     const visibleRect = getVisibleWorldRect(nextScale, nextScrollLeft, nextScrollTop, viewport);
 
     return nodes.some(
@@ -181,17 +200,19 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   const getClosestNode = (worldX: number, worldY: number) => {
     if (nodes.length === 0) return null;
 
-    return nodes.reduce((closest, node) => {
-      const centerX = node.pos_x + CARD_WIDTH / 2;
-      const centerY = node.pos_y + CARD_HEIGHT / 2;
-      const distance = (centerX - worldX) ** 2 + (centerY - worldY) ** 2;
+    return (
+      nodes.reduce((closest, node) => {
+        const centerX = node.pos_x + CARD_WIDTH / 2;
+        const centerY = node.pos_y + CARD_HEIGHT / 2;
+        const distance = (centerX - worldX) ** 2 + (centerY - worldY) ** 2;
 
-      if (!closest || distance < closest.distance) {
-        return { node, distance };
-      }
+        if (!closest || distance < closest.distance) {
+          return { node, distance };
+        }
 
-      return closest;
-    }, null as { node: BoardNode; distance: number } | null)?.node ?? null;
+        return closest;
+      }, null as { node: BoardNode; distance: number } | null)?.node ?? null
+    );
   };
 
   const getNodeCenteredScroll = (node: BoardNode, nextScale: number, viewport: HTMLDivElement) => {
@@ -242,8 +263,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
       if (event.pointerId !== drag.pointerId) return;
 
       const movedDistance = Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY);
-      const shouldOpenReadPanel =
-        accessMode === "read" && isMobile && movedDistance < DRAG_ACTIVATION_DISTANCE;
+      const shouldOpenReadPanel = accessMode === "read" && isMobile && movedDistance < DRAG_ACTIVATION_DISTANCE;
       const nodeId = drag.nodeId;
 
       setDrag(null);
@@ -262,7 +282,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
       window.removeEventListener("pointerup", handlePointerEnd);
       window.removeEventListener("pointercancel", handlePointerEnd);
     };
-  }, [accessMode, drag, getPointerPosition, isMobile, onNodePositionChange]);
+  }, [accessMode, drag, isMobile, onNodePositionChange, nodes]);
 
   const handleNodePointerDown = (e: React.PointerEvent<HTMLDivElement>, node: BoardNode) => {
     if (!e.isPrimary) return;
@@ -273,7 +293,6 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
 
     const actualNode = nodesById.get(node.node_id) ?? node;
     const pointer = getPointerPosition(e.clientX, e.clientY);
-
     if (!pointer) return;
 
     if (mode !== "idle") {
@@ -385,7 +404,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
                 }}
                 onPointerDown={handleNodePointerDown}
                 onDoubleClick={handleNodeDoubleClick}
-                showInlineDescription={accessMode === "edit"}
+                showInlineDescription={false}
               />
             ))}
 
@@ -398,6 +417,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
                 const from = nodesById.get(edge.node1);
                 const to = nodesById.get(edge.node2);
                 if (!from || !to) return null;
+
                 return (
                   <EdgeLine
                     key={edge.edge_id}
@@ -413,11 +433,21 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
       </div>
 
       {accessMode === "edit" && mode === "edit-node" && (
-        <NodeInspector node={selectedNode} onSaveNode={onSelectedNodeSave} onUploadImage={onUploadImage} />
+        <NodeInspector
+          node={selectedNode}
+          descriptionSheets={selectedNodeSheets}
+          connectedNodes={connectedNodes}
+          onSaveNode={onSelectedNodeSave}
+        />
       )}
 
       {accessMode === "read" && readPanelNodeId !== null && (
-        <NodeReadPanel node={readPanelNode} onClose={handleReadPanelClose} mobile={isMobile} />
+        <NodeReadPanel
+          node={readPanelNode}
+          descriptionSheets={readPanelSheets}
+          onClose={handleReadPanelClose}
+          mobile={isMobile}
+        />
       )}
     </div>
   );

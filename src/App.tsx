@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { InvestigationBoardScreen } from "./InvestigationBoardScreen";
-import type { BoardNode, BoardEdge, BoardVersion, BoardAccessMode } from "./boardTypes";
+import type {
+  BoardAccessMode,
+  BoardEdge,
+  BoardNode,
+  BoardVersion,
+  CanonicalEntity,
+} from "./boardTypes";
 import { boardDataSource } from "./boardDataSource";
 import { authClient } from "./auth/authClient";
 
@@ -17,24 +23,29 @@ function getVisibleVersions(versions: BoardVersion[], accessMode: BoardAccessMod
 
 function resolveCurrentVersion(
   versions: BoardVersion[],
-  requestedVersion: string | null | undefined,
+  requestedVersion: number | null | undefined,
   accessMode: BoardAccessMode
-): string | null {
+): number | null {
   const visibleVersions = getVisibleVersions(versions, accessMode);
 
   if (visibleVersions.length === 0) return null;
-  if (requestedVersion && visibleVersions.some((version) => version.version === requestedVersion)) {
+  if (
+    requestedVersion !== null &&
+    requestedVersion !== undefined &&
+    visibleVersions.some((version) => version.version === requestedVersion)
+  ) {
     return requestedVersion;
   }
 
-  return visibleVersions[0]?.version ?? null;
+  return visibleVersions[visibleVersions.length - 1]?.version ?? null;
 }
 
 export default function App() {
   const [nodes, setNodes] = useState<BoardNode[]>([]);
   const [edges, setEdges] = useState<BoardEdge[]>([]);
   const [versions, setVersions] = useState<BoardVersion[]>([]);
-  const [currentVersion, setCurrentVersion] = useState<string | null>(null);
+  const [canonicalEntities, setCanonicalEntities] = useState<CanonicalEntity[]>([]);
+  const [currentVersion, setCurrentVersion] = useState<number | null>(null);
 
   const [accessMode, setAccessMode] = useState<BoardAccessMode>("read");
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
@@ -54,28 +65,25 @@ export default function App() {
 
     (async () => {
       try {
-        const [versionsList, activeVersion] = await Promise.all([
+        const [versionsList, entitiesList] = await Promise.all([
           boardDataSource.getVersions(boardId),
-          boardDataSource.getActiveVersion(boardId),
+          boardDataSource.getCanonicalEntities(boardId),
         ]);
-
         if (cancelled) return;
 
-        const initialVersion = resolveCurrentVersion(versionsList, activeVersion, "read");
+        const initialVersion = resolveCurrentVersion(versionsList, null, "read");
         setVersions(versionsList);
+        setCanonicalEntities(entitiesList);
         setCurrentVersion(initialVersion);
 
-        if (!initialVersion) {
+        if (initialVersion === null) {
           setNodes([]);
           setEdges([]);
           setLoading(false);
           return;
         }
 
-        const graph = await boardDataSource.getCurrentBoard(
-          boardId,
-          initialVersion
-        );
+        const graph = await boardDataSource.getCurrentBoard(boardId, initialVersion);
         if (cancelled) return;
 
         setNodes(graph.nodes);
@@ -93,10 +101,10 @@ export default function App() {
     };
   }, []);
 
-  const handleChangeVersion = async (version: string) => {
+  const handleChangeVersion = async (version: number) => {
     const boardId = "demo-board";
     const nextVersion = resolveCurrentVersion(versions, version, accessMode);
-    if (!nextVersion || nextVersion !== version) return;
+    if (nextVersion === null || nextVersion !== version) return;
 
     setLoading(true);
     setError(null);
@@ -114,7 +122,7 @@ export default function App() {
   };
 
   const handleCreateVersion = async (payload: {
-    version: string;
+    version: number;
     name: string;
     description: string;
     is_published?: boolean | null;
@@ -144,7 +152,7 @@ export default function App() {
     }
   };
 
-  const handleCurrentVersionPublicationChange = (version: string, isPublished: boolean) => {
+  const handleCurrentVersionPublicationChange = (version: number, isPublished: boolean) => {
     setVersions((prev) =>
       prev.map((item) =>
         item.version === version
@@ -157,33 +165,31 @@ export default function App() {
     );
   };
 
-  const handleDeleteVersion = async (version: string) => {
+  const handleCanonicalEntitiesChange = async (nextEntities: CanonicalEntity[]) => {
+    const boardId = "demo-board";
+    await boardDataSource.updateCanonicalEntities(boardId, nextEntities);
+    setCanonicalEntities(nextEntities);
+  };
+
+  const handleDeleteVersion = async (version: number) => {
     if (accessMode !== "edit") {
       throw new Error("Режим редактирования недоступен.");
     }
 
     const boardId = "demo-board";
     try {
-      const active = await boardDataSource.getActiveVersion(boardId);
-      if (active === version) {
-        throw new Error("Невозможно удалить активную версию доски");
-      }
-
       await boardDataSource.deleteVersion({ version });
 
       const versionsList = await boardDataSource.getVersions(boardId);
       setVersions(versionsList);
 
-      let nextVersion: string | null = currentVersion;
-      if (!versionsList.some((v) => v.version === nextVersion)) {
-        const activeAfter = await boardDataSource.getActiveVersion(boardId);
-        nextVersion =
-          versionsList.find((v) => v.version === activeAfter)?.version ??
-          versionsList[0]?.version ??
-          null;
-      }
+      const nextVersion = resolveCurrentVersion(
+        versionsList,
+        currentVersion === version ? null : currentVersion,
+        accessMode
+      );
 
-      if (nextVersion) {
+      if (nextVersion !== null) {
         const graph = await boardDataSource.getCurrentBoard(boardId, nextVersion);
         setNodes(graph.nodes);
         setEdges(graph.edges);
@@ -193,10 +199,10 @@ export default function App() {
         setEdges([]);
         setCurrentVersion(null);
       }
-    } catch (e: any) {
-      const msg = e?.message ? String(e.message) : "Не удалось удалить версию доски";
-      console.error(msg);
-      throw new Error(msg);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Не удалось удалить версию доски";
+      console.error(message);
+      throw new Error(message);
     }
   };
 
@@ -278,7 +284,7 @@ export default function App() {
 
   if (loading) return <div>Загружаем доску…</div>;
   if (error) return <div>{error}</div>;
-  if (!currentVersion) return <div>Нет опубликованных досок для режима просмотра.</div>;
+  if (currentVersion === null) return <div>Нет опубликованных досок для режима просмотра.</div>;
 
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
@@ -287,6 +293,7 @@ export default function App() {
         title="Доска расследований"
         initialNodes={nodes}
         initialEdges={edges}
+        initialCanonicalEntities={canonicalEntities}
         versions={visibleVersions}
         currentVersion={currentVersion}
         accessMode={accessMode}
@@ -294,6 +301,7 @@ export default function App() {
         onCreateVersion={handleCreateVersion}
         onDeleteVersion={handleDeleteVersion}
         onCurrentVersionPublicationChange={handleCurrentVersionPublicationChange}
+        onCanonicalEntitiesChange={handleCanonicalEntitiesChange}
         onRequestEditMode={handleRequestEditMode}
       />
 

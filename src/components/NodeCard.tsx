@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { BoardNode } from "../boardTypes";
+import { getDescriptionPreviewText } from "../boardDescription";
 import { getNodeCardLayout } from "../cardLayout";
 import { FILE_RES_BASE_URL } from "../fileDataSource";
 import "./NodeCard.css";
@@ -35,10 +36,14 @@ export const NodeCard: React.FC<NodeCardProps> = ({
 
   const imgSrc = useMemo(() => {
     if (!layout.hasImage) return null;
-    const id = node.picture_path;
-    if (!id) return null;
-    return `${FILE_RES_BASE_URL}/res/${id}`;
+    if (!node.picture_path) return null;
+    return `${FILE_RES_BASE_URL}/res/${node.picture_path}`;
   }, [layout.hasImage, node.picture_path]);
+
+  const inlineDescription = useMemo(
+    () => getDescriptionPreviewText(node.description),
+    [node.description]
+  );
 
   useEffect(() => {
     setImgFailed(false);
@@ -68,7 +73,6 @@ export const NodeCard: React.FC<NodeCardProps> = ({
       data-node-type={node.node_type}
       onPointerDown={handlePointerDown}
     >
-      {/* ПОЛАРОИД */}
       <div className="node-card__polaroid" onDoubleClick={handleDoubleClick}>
         {layout.hasImage && (
           <div className="node-card__photo">
@@ -94,7 +98,11 @@ export const NodeCard: React.FC<NodeCardProps> = ({
         <div className="node-card__title">{node.name}</div>
       </div>
 
-      {showInlineDescription && isOpen && <div className="node-card__sheet notebook-sheet">{node.description}</div>}
+      {showInlineDescription && isOpen && (
+        <div className="node-card__sheet notebook-sheet">
+          {inlineDescription || "Описание отсутствует."}
+        </div>
+      )}
     </div>
   );
 };

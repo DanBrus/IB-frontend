@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
+import {
+  type BoardDescriptionSheet,
+  getSheetSourceLabel,
+  truncateSheetSourceLabel,
+} from "../boardDescription";
 import type { BoardNode } from "../boardTypes";
 import "./NodeCard.css";
-import {
-  clampReadPanelWidth,
-  DESKTOP_READ_PANEL_DEFAULT_WIDTH,
-} from "./panelSizing";
+import { clampReadPanelWidth, DESKTOP_READ_PANEL_DEFAULT_WIDTH } from "./panelSizing";
 
 type MobileSheetState = "half" | "full";
 type DesktopResizeState = {
@@ -15,6 +17,7 @@ type DesktopResizeState = {
 
 interface NodeReadPanelProps {
   node: BoardNode | null;
+  descriptionSheets: BoardDescriptionSheet[];
   onClose: () => void;
   mobile?: boolean;
 }
@@ -22,7 +25,12 @@ interface NodeReadPanelProps {
 const MOBILE_DRAG_CLOSE_THRESHOLD = 96;
 const MOBILE_DRAG_EXPAND_THRESHOLD = 72;
 
-export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose, mobile = false }) => {
+export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
+  node,
+  descriptionSheets,
+  onClose,
+  mobile = false,
+}) => {
   const [sheetState, setSheetState] = useState<MobileSheetState>("half");
   const [dragPointerId, setDragPointerId] = useState<number | null>(null);
   const [dragStartY, setDragStartY] = useState(0);
@@ -138,11 +146,9 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose, mob
   }, [desktopResizeState, mobile]);
 
   const handleSheetPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!mobile) return;
-    if (!event.isPrimary) return;
+    if (!mobile || !event.isPrimary) return;
 
     event.preventDefault();
-
     setDragPointerId(event.pointerId);
     setDragStartY(event.clientY);
     setDragOffsetY(0);
@@ -150,8 +156,7 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose, mob
   };
 
   const handleDesktopResizePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (mobile) return;
-    if (!event.isPrimary || event.button !== 0) return;
+    if (mobile || !event.isPrimary || event.button !== 0) return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -175,21 +180,36 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose, mob
 
   const descriptionContent = (
     <div
-      className="notebook-sheet"
+      className="paper-stack"
       style={{
-        minHeight: "100%",
-        paddingTop: 16,
-        paddingBottom: mobile ? "calc(16px + env(safe-area-inset-bottom, 0px))" : 16,
-        fontSize: 13,
-        borderRadius: mobile ? 0 : 4,
-        borderLeft: mobile ? "none" : "1px solid #dddddd",
-        borderRight: mobile ? "none" : "1px solid #dddddd",
-        boxShadow: mobile ? "none" : "0 1px 3px rgba(0, 0, 0, 0.15)",
+        padding: mobile ? "16px 14px calc(18px + env(safe-area-inset-bottom, 0px))" : "16px 10px 18px",
       }}
     >
-      <div style={{ transform: "translateY(-9px)", paddingBottom: 9 }}>
-        {node?.description?.trim() ? node.description : "Описание отсутствует."}
-      </div>
+      {descriptionSheets.length > 0 ? (
+        descriptionSheets.map((sheet) => {
+          const fullSourceLabel = getSheetSourceLabel(sheet.relatedNodeNames);
+          const previewSourceLabel = truncateSheetSourceLabel(fullSourceLabel);
+
+          return (
+            <article key={sheet.id} className="paper-note">
+              <div className="paper-note__margin" title={fullSourceLabel || undefined}>
+                <div className="paper-note__sources">
+                  {previewSourceLabel ? (
+                    <div className="paper-note__source">{previewSourceLabel}</div>
+                  ) : (
+                    <div className="paper-note__source paper-note__source--empty">&nbsp;</div>
+                  )}
+                </div>
+              </div>
+              <div className="paper-note__body">
+                <div className="paper-note__text">{sheet.description}</div>
+              </div>
+            </article>
+          );
+        })
+      ) : (
+        <div className="paper-stack__empty">Описание отсутствует.</div>
+      )}
     </div>
   );
 
@@ -278,15 +298,7 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose, mob
             </div>
           </div>
 
-          <div
-            style={{
-              flexGrow: 1,
-              minHeight: 0,
-              overflowY: "auto",
-            }}
-          >
-            {descriptionContent}
-          </div>
+          <div style={{ flexGrow: 1, minHeight: 0, overflowY: "auto" }}>{descriptionContent}</div>
         </aside>
       </div>
     );
@@ -358,15 +370,7 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({ node, onClose, mob
         </button>
       </div>
 
-      <div
-        style={{
-          flexGrow: 1,
-          minHeight: 0,
-          overflowY: "auto",
-        }}
-      >
-        {descriptionContent}
-      </div>
+      <div style={{ flexGrow: 1, minHeight: 0, overflowY: "auto" }}>{descriptionContent}</div>
     </aside>
   );
 };
