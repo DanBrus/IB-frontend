@@ -56,7 +56,7 @@ interface InvestigationBoardProps {
   onSelectedNodeSave: (
     id: number,
     patch: {
-      CE_id: string;
+      ce_id: string;
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => Promise<void>;

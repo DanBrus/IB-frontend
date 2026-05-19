@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { InvestigationBoard } from "./InvestigationBoard";
 import type { EditableBoardDescriptionSheet } from "./boardDescription";
 import { buildDescriptionAssignments } from "./boardDescription";
@@ -9,6 +9,7 @@ import {
 import type {
   BoardAccessMode,
   BoardEdge,
+  FreeIds,
   BoardNode,
   BoardVersion,
   CanonicalEntity,
@@ -21,6 +22,8 @@ import type {
 } from "./boardDataSource";
 import { boardDataSource } from "./boardDataSource";
 import { fileDataSource } from "./fileDataSource";
+
+const BOARD_ID = "demo-board";
 
 interface InvestigationBoardScreenProps {
   title?: string;
@@ -38,7 +41,12 @@ interface InvestigationBoardScreenProps {
     is_published?: boolean | null;
   }) => Promise<void>;
   onDeleteVersion: (version: number) => Promise<void>;
-  onCurrentVersionPublicationChange: (version: number, isPublished: boolean) => void;
+  onPersistBoard: (payload: {
+    version: number;
+    nodes: BoardNode[];
+    edges: BoardEdge[];
+    is_published: boolean;
+  }) => Promise<void>;
   onCanonicalEntitiesChange: (
     entities: CanonicalEntity[]
   ) => Promise<CanonicalEntitiesSyncResult>;
@@ -60,7 +68,7 @@ function mergeRefreshedNodes(currentNodes: BoardNode[], refreshedNodes: BoardNod
     refreshedNodesById.delete(node.node_id);
     return {
       ...node,
-      CE_id: refreshedNode.CE_id,
+      ce_id: refreshedNode.ce_id,
       name: refreshedNode.name,
       node_type: refreshedNode.node_type,
       picture_path: refreshedNode.picture_path,
@@ -83,7 +91,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   onChangeVersion,
   onCreateVersion,
   onDeleteVersion,
-  onCurrentVersionPublicationChange,
+  onPersistBoard,
   onCanonicalEntitiesChange,
   onCanonicalEntityDelete,
   onRequestEditMode,
@@ -103,6 +111,9 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   const initialIsPublished =
     versions.find((version) => version.version === currentVersion)?.is_published ?? false;
   const [isPublished, setIsPublished] = useState(Boolean(initialIsPublished));
+  const [freeIdsLoading, setFreeIdsLoading] = useState(false);
+  const [freeIdsError, setFreeIdsError] = useState<string | null>(null);
+  const freeIdsRef = useRef<FreeIds | null>(null);
 
   const nodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
@@ -121,14 +132,92 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   }, [currentVersion, initialIsPublished]);
 
   useEffect(() => {
+    setNodes(initialNodes);
+    setEdges(initialEdges);
+    setMode("idle");
+    setEdgeActionFirstNodeId(null);
+    setSelectedNodeId(null);
+    setDraftNode(null);
+  }, [currentVersion, initialEdges, initialNodes]);
+
+  useEffect(() => {
     setCanonicalEntities(sortCanonicalEntities(initialCanonicalEntities));
   }, [initialCanonicalEntities]);
 
-  const selectedNode =
-    draftNode ?? (selectedNodeId !== null ? nodesById.get(selectedNodeId) ?? null : null);
   const isEditMode = accessMode === "edit";
 
+  useEffect(() => {
+    if (!isEditMode) {
+      freeIdsRef.current = null;
+      setFreeIdsLoading(false);
+      setFreeIdsError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setFreeIdsLoading(true);
+    setFreeIdsError(null);
+
+    void boardDataSource
+      .getFreeIds(BOARD_ID)
+      .then((nextFreeIds) => {
+        if (cancelled) return;
+        freeIdsRef.current = { ...nextFreeIds };
+        setFreeIdsLoading(false);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        freeIdsRef.current = null;
+        setFreeIdsLoading(false);
+        setFreeIdsError(
+          error instanceof Error
+            ? error.message
+            : "Не удалось получить свободные id с сервера."
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentVersion, initialEdges, initialNodes, isEditMode]);
+
+  const selectedNode =
+    draftNode ?? (selectedNodeId !== null ? nodesById.get(selectedNodeId) ?? null : null);
+
   const resetEdgeAction = () => setEdgeActionFirstNodeId(null);
+
+  const allocateNextFreeId = (kind: keyof FreeIds): number => {
+    const freeIds = freeIdsRef.current;
+    if (!freeIds) {
+      throw new Error(
+        freeIdsLoading
+          ? "Свободные id ещё загружаются. Попробуйте снова через секунду."
+          : freeIdsError
+            ? `Не удалось получить свободные id: ${freeIdsError}`
+            : "Свободные id недоступны. Попробуйте обновить страницу."
+      );
+    }
+
+    const nextId = freeIds[kind];
+    freeIdsRef.current = {
+      ...freeIds,
+      [kind]: nextId + 1,
+    };
+    return nextId;
+  };
+
+  const ensureFreeIdsReady = (): boolean => {
+    if (freeIdsRef.current) return true;
+
+    const message = freeIdsLoading
+      ? "Свободные id ещё загружаются. Попробуйте снова через секунду."
+      : freeIdsError
+        ? `Не удалось получить свободные id: ${freeIdsError}`
+        : "Свободные id недоступны. Попробуйте обновить страницу.";
+
+    window.alert(message);
+    return false;
+  };
 
   const clearNodeSelection = () => {
     setSelectedNodeId(null);
@@ -137,6 +226,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
 
   const handleNodeAddClick = () => {
     if (!isEditMode) return;
+    if (!ensureFreeIdsReady()) return;
     setMode((prev) => (prev === "add-node" ? "idle" : "add-node"));
     resetEdgeAction();
     clearNodeSelection();
@@ -159,6 +249,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
 
   const handleEdgeAddClick = () => {
     if (!isEditMode) return;
+    if (!ensureFreeIdsReady()) return;
     setMode((prev) => (prev === "add-edge" ? "idle" : "add-edge"));
     resetEdgeAction();
     clearNodeSelection();
@@ -174,15 +265,9 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   const handleBoardClick = (x: number, y: number) => {
     if (!isEditMode || mode !== "add-node") return;
 
-    const nextDraftNodeId =
-      nodes.reduce(
-        (minNodeId, node) => Math.min(minNodeId, node.node_id),
-        0
-      ) - 1;
-
     setDraftNode({
-      node_id: nextDraftNodeId,
-      CE_id: "",
+      node_id: allocateNextFreeId("node_id"),
+      ce_id: "",
       name: "",
       pos_x: x,
       pos_y: y,
@@ -234,18 +319,10 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
         );
         if (exists) return;
 
-        const maxEdgeId =
-          edges.length > 0
-            ? edges.reduce(
-                (maxIdSoFar, edge) => Math.max(maxIdSoFar, edge.edge_id),
-                0
-              )
-            : 0;
-
         setEdges((prev) => [
           ...prev,
           {
-            edge_id: maxEdgeId + 1,
+            edge_id: allocateNextFreeId("edge_id"),
             node1: fromId,
             node2: toId,
             description: [],
@@ -288,13 +365,13 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   const handleSelectedNodeSave = async (
     id: number,
     patch: {
-      CE_id: string;
+      ce_id: string;
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => {
     if (!isEditMode) return;
 
-    const canonicalEntity = canonicalEntitiesById.get(patch.CE_id);
+    const canonicalEntity = canonicalEntitiesById.get(patch.ce_id);
     if (!canonicalEntity) {
       throw new Error("Выберите существующую canonical entity.");
     }
@@ -302,11 +379,12 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
     const { nodeChunks, edgeChunksByEdgeId } = buildDescriptionAssignments(
       id,
       edges,
-      patch.descriptionSheets
+      patch.descriptionSheets,
+      () => allocateNextFreeId("chunk_id")
     );
 
     const nodePatch = {
-      CE_id: canonicalEntity.en_id,
+      ce_id: canonicalEntity.en_id,
       name: canonicalEntity.name,
       node_type: canonicalEntity.entity_type,
       picture_path: getCanonicalEntityPicturePath(canonicalEntity),
@@ -314,26 +392,17 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
     };
 
     if (draftNode && draftNode.node_id === id) {
-      const maxNodeId =
-        nodes.length > 0
-          ? nodes.reduce(
-              (maxIdSoFar, node) => Math.max(maxIdSoFar, node.node_id),
-              0
-            )
-          : 0;
-      const newNodeId = maxNodeId + 1;
-
       setNodes((prev) => [
         ...prev,
         {
-          node_id: newNodeId,
+          node_id: draftNode.node_id,
           pos_x: draftNode.pos_x,
           pos_y: draftNode.pos_y,
           ...nodePatch,
         },
-      ]);
+      ].sort((left, right) => left.node_id - right.node_id));
       setDraftNode(null);
-      setSelectedNodeId(newNodeId);
+      setSelectedNodeId(draftNode.node_id);
       return;
     }
 
@@ -399,7 +468,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   };
 
   const refreshNodesFromServer = async () => {
-    const nextNodes = await boardDataSource.getNodes("demo-board", currentVersion);
+    const nextNodes = await boardDataSource.getNodes(BOARD_ID, currentVersion);
     setNodes((prev) => mergeRefreshedNodes(prev, nextNodes));
   };
 
@@ -421,15 +490,12 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
 
     setIsPublishing(true);
     try {
-      await boardDataSource.updateBoard({
+      await onPersistBoard({
         version: currentVersion,
         nodes,
         edges,
-        description: null,
-        board_name: null,
         is_published: isPublished,
       });
-      onCurrentVersionPublicationChange(currentVersion, isPublished);
     } catch (e: unknown) {
       window.alert(
         e instanceof Error ? e.message : "Не удалось сохранить текущую версию."

@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
 import {
   createEmptyCanonicalEntity,
+  getCanonicalEntityMergeTarget,
   getCanonicalEntityPicturePath,
+  isCanonicalEntityMerged,
   sortCanonicalEntities,
 } from "../canonicalEntities";
 import { BOARD_NODE_TYPES, type BoardNodeType, type CanonicalEntity } from "../boardTypes";
@@ -88,7 +90,12 @@ function buildGroupedEntities(entities: CanonicalEntity[], searchTerm: string) {
   const filteredEntities = sortCanonicalEntities(entities).filter((entity) => {
     if (!normalizedSearchTerm) return true;
 
-    const haystack = [entity.name, entity.en_id, entity.entity_type]
+    const haystack = [
+      entity.name,
+      entity.en_id,
+      entity.entity_type,
+      getCanonicalEntityMergeTarget(entity) ?? "",
+    ]
       .map((value) => normalizeSearchValue(value))
       .join(" ");
 
@@ -120,6 +127,9 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   const [entityId, setEntityId] = useState(entity.en_id);
   const [name, setName] = useState(entity.name);
   const [entityType, setEntityType] = useState<BoardNodeType>(entity.entity_type);
+  const [mergedTo, setMergedTo] = useState(
+    getCanonicalEntityMergeTarget(entity) ?? ""
+  );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -138,6 +148,13 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
     const picturePath = getCanonicalEntityPicturePath(entity);
     return picturePath ? `${FILE_RES_BASE_URL}/res/${picturePath}` : null;
   }, [entity]);
+  const availableMergeTargets = useMemo(
+    () =>
+      sortCanonicalEntities(
+        existingEntities.filter((existingEntity) => existingEntity.en_id !== entity.en_id)
+      ),
+    [entity.en_id, existingEntities]
+  );
 
   useEffect(() => {
     return () => {
@@ -215,6 +232,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   const handleSave = async () => {
     const trimmedEntityId = entityId.trim();
     const trimmedName = name.trim();
+    const normalizedMergedTo = mergedTo.trim() || null;
 
     if (!trimmedEntityId) {
       setError("У сущности должен быть en_id.");
@@ -231,6 +249,19 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
     );
     if (duplicate) {
       setError(`Сущность с en_id "${trimmedEntityId}" уже существует.`);
+      return;
+    }
+
+    if (normalizedMergedTo === trimmedEntityId) {
+      setError("Сущность не может быть merged сама в себя.");
+      return;
+    }
+
+    if (
+      normalizedMergedTo &&
+      !availableMergeTargets.some((candidate) => candidate.en_id === normalizedMergedTo)
+    ) {
+      setError("Выберите существующую canonical entity для merged_to.");
       return;
     }
 
@@ -255,6 +286,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
           name: trimmedName,
           entity_type: entityType,
           picture_paths: picturePaths,
+          merged_to: normalizedMergedTo,
         },
         isNew ? null : entity.en_id
       );
@@ -281,7 +313,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
 
       if (deleteResult.outcome === "blocked") {
         setError(
-          "Сначала удалите все ноды, связанные с данной canonical Entity."
+          "Сначала удалите все ноды, связанные с данной canonical Entity, и проверьте связанные merge-ссылки."
         );
         return;
       }
@@ -422,6 +454,32 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
             {BOARD_NODE_TYPES.map((type) => (
               <option key={type} value={type}>
                 {type}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label style={{ fontSize: 12, fontWeight: 600 }}>
+          merged_to
+          <select
+            value={mergedTo}
+            disabled={saving || deleting}
+            onChange={(event) => setMergedTo(event.target.value)}
+            style={{
+              width: "100%",
+              marginTop: 4,
+              padding: "6px 8px",
+              fontSize: 13,
+              borderRadius: 6,
+              border: "1px solid #ccc",
+              boxSizing: "border-box",
+              backgroundColor: saving || deleting ? "#f2f2f2" : "#fff",
+            }}
+          >
+            <option value="">Не merged</option>
+            {availableMergeTargets.map((candidate) => (
+              <option key={candidate.en_id} value={candidate.en_id}>
+                {candidate.name} ({candidate.entity_type}) [{candidate.en_id}]
               </option>
             ))}
           </select>
@@ -867,6 +925,8 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
                     {groupEntities.map((entity) => {
                       const picturePath = getCanonicalEntityPicturePath(entity);
                       const imageUrl = picturePath ? `${FILE_RES_BASE_URL}/res/${picturePath}` : null;
+                      const mergedTarget = getCanonicalEntityMergeTarget(entity);
+                      const merged = isCanonicalEntityMerged(entity);
 
                       return (
                         <button
@@ -923,14 +983,34 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
                             <div
                               style={{
                                 flexGrow: 1,
-                                padding: "10px 12px",
-                                display: "flex",
-                                flexDirection: "column",
-                                gap: 6,
-                              }}
-                            >
-                              <div style={{ fontWeight: 700, fontSize: 14, color: "#222" }}>{entity.name || "Без имени"}</div>
+                              padding: "10px 12px",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 6,
+                            }}
+                          >
+                              <div
+                                style={{
+                                  fontWeight: 700,
+                                  fontSize: 14,
+                                  color: merged ? "#818181" : "#222",
+                                }}
+                              >
+                                {entity.name || "Без имени"}
+                              </div>
                               <div style={{ fontSize: 12, color: "#666" }}>{entity.en_id}</div>
+                              {mergedTarget && (
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: "#b24444",
+                                    fontWeight: 400,
+                                    letterSpacing: "0.08em",
+                                  }}
+                                >
+                                  MERGED {"->"} {mergedTarget}
+                                </div>
+                              )}
                               <div style={{ marginTop: "auto", fontSize: 12, color: "#444" }}>{entity.entity_type}</div>
                             </div>
                           </div>

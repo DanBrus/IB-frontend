@@ -36,6 +36,8 @@ type DescriptionAssignment = {
   edgeChunksByEdgeId: Map<number, BoardChunk[]>;
 };
 
+type AllocateChunkId = () => number;
+
 const SHEET_SOURCE_SEPARATOR = ", ";
 
 function createLocalSheetId(prefix = "sheet"): string {
@@ -251,7 +253,8 @@ export function createEmptyDescriptionSheet(
 export function buildDescriptionAssignments(
   nodeId: number,
   edges: BoardEdge[],
-  sheets: EditableBoardDescriptionSheet[]
+  sheets: EditableBoardDescriptionSheet[],
+  allocateChunkId: AllocateChunkId
 ): DescriptionAssignment {
   const connectedEdgeByNodeId = new Map<number, BoardEdge>();
   const edgeChunksByEdgeId = new Map<number, BoardChunk[]>();
@@ -287,16 +290,29 @@ export function buildDescriptionAssignments(
 
   const nodeChunks: BoardChunk[] = [];
 
-  normalizedSheets.forEach((sheet, index) => {
-    const chunk: BoardChunk = {
-      c_id: sheet.c_ids[0] && sheet.c_ids[0] > 0 ? sheet.c_ids[0] : -(index + 1),
+  normalizedSheets.forEach((sheet) => {
+    const existingChunkIds = [...sheet.c_ids]
+      .filter((chunkId) => Number.isFinite(chunkId) && chunkId > 0)
+      .sort((left, right) => left - right);
+
+    const takeChunkId = () => {
+      const existingChunkId = existingChunkIds.shift();
+      return existingChunkId ?? allocateChunkId();
+    };
+
+    const baseChunk = {
       description: sheet.description,
       chunk_priority: sheet.chunk_priority,
       timecode: sheet.timecode,
     };
 
-    const saveToNode = sheet.relatedNodeIds.length === 0 || sheet.isNodeOwned;
-    if (saveToNode) nodeChunks.push({ ...chunk });
+    const saveToNode = sheet.relatedNodeIds.length === 0;
+    if (saveToNode) {
+      nodeChunks.push({
+        ...baseChunk,
+        c_id: takeChunkId(),
+      });
+    }
 
     sheet.relatedNodeIds.forEach((relatedNodeId) => {
       const edge = connectedEdgeByNodeId.get(relatedNodeId);
@@ -305,7 +321,10 @@ export function buildDescriptionAssignments(
       const edgeChunks = edgeChunksByEdgeId.get(edge.edge_id);
       if (!edgeChunks) return;
 
-      edgeChunks.push({ ...chunk });
+      edgeChunks.push({
+        ...baseChunk,
+        c_id: takeChunkId(),
+      });
     });
   });
 

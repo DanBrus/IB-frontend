@@ -30,6 +30,15 @@ type PendingScroll = {
   top: number;
 } | null;
 
+type BoardPanState = {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startScrollLeft: number;
+  startScrollTop: number;
+  hasMoved: boolean;
+} | null;
+
 const CANVAS_PADDING = 120;
 const DESKTOP_DEFAULT_SCALE = 1;
 const MOBILE_DEFAULT_SCALE = 1 / 1.75;
@@ -52,7 +61,7 @@ interface InvestigationBoardWorkspaceProps {
   onSelectedNodeSave: (
     id: number,
     patch: {
-      CE_id: string;
+      ce_id: string;
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => Promise<void>;
@@ -74,9 +83,11 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   const minScale = isMobile ? MOBILE_MIN_SCALE : DESKTOP_MIN_SCALE;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<DragState>(null);
+  const [boardPan, setBoardPan] = useState<BoardPanState>(null);
   const [readPanelNodeId, setReadPanelNodeId] = useState<number | null>(null);
   const [scale, setScale] = useState(() => (isMobile ? MOBILE_DEFAULT_SCALE : DESKTOP_DEFAULT_SCALE));
   const pendingScrollRef = useRef<PendingScroll>(null);
+  const suppressBoardClickRef = useRef(false);
 
   const nodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
@@ -232,12 +243,76 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   };
 
   const handleBoardClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (suppressBoardClickRef.current) {
+      suppressBoardClickRef.current = false;
+      return;
+    }
+
     if (accessMode === "read") return;
     const pointer = getPointerPosition(e.clientX, e.clientY);
     if (!pointer) return;
 
     onBoardClick(pointer.worldX, pointer.worldY);
   };
+
+  useEffect(() => {
+    if (!boardPan) return;
+
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== boardPan.pointerId) return;
+
+      const movedDistance = Math.hypot(
+        event.clientX - boardPan.startClientX,
+        event.clientY - boardPan.startClientY
+      );
+      const hasMovedEnough =
+        boardPan.hasMoved || movedDistance >= DRAG_ACTIVATION_DISTANCE;
+
+      if (!hasMovedEnough) return;
+
+      event.preventDefault();
+
+      if (!boardPan.hasMoved) {
+        setBoardPan((currentPan) =>
+          currentPan && currentPan.pointerId === event.pointerId
+            ? { ...currentPan, hasMoved: true }
+            : currentPan
+        );
+      }
+
+      viewport.scrollTo({
+        left: boardPan.startScrollLeft - (event.clientX - boardPan.startClientX),
+        top: boardPan.startScrollTop - (event.clientY - boardPan.startClientY),
+      });
+    };
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      if (event.pointerId !== boardPan.pointerId) return;
+
+      suppressBoardClickRef.current =
+        Math.hypot(
+          event.clientX - boardPan.startClientX,
+          event.clientY - boardPan.startClientY
+        ) >= DRAG_ACTIVATION_DISTANCE;
+      setBoardPan(null);
+    };
+
+    document.body.style.userSelect = "none";
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+
+    return () => {
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }, [boardPan]);
 
   useEffect(() => {
     if (!drag || !onNodePositionChange) return;
@@ -324,12 +399,31 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
     setReadPanelNodeId(node.node_id);
   };
 
+  const handleViewportPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (isMobile) return;
+    if (!event.isPrimary) return;
+    if (event.pointerType !== "mouse" || event.button !== 0) return;
+
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    suppressBoardClickRef.current = false;
+    setBoardPan({
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startScrollLeft: viewport.scrollLeft,
+      startScrollTop: viewport.scrollTop,
+      hasMoved: false,
+    });
+  };
+
   const handleReadPanelClose = () => {
     setReadPanelNodeId(null);
   };
 
   const handleViewportWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (!e.shiftKey) return;
+    if (isMobile || !e.altKey) return;
 
     const viewport = viewportRef.current;
     const pointer = getPointerPosition(e.clientX, e.clientY);
@@ -375,9 +469,17 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
           position: "relative",
           flexGrow: 1,
           overflow: "auto",
-          cursor: drag != null ? "grabbing" : accessMode === "edit" && mode === "add-node" ? "crosshair" : "default",
+          cursor:
+            drag != null || boardPan != null
+              ? "grabbing"
+              : accessMode === "edit" && mode === "add-node"
+                ? "crosshair"
+                : !isMobile
+                  ? "grab"
+                  : "default",
         }}
         onWheel={handleViewportWheel}
+        onPointerDown={handleViewportPointerDown}
         onClick={handleBoardClick}
       >
         <div

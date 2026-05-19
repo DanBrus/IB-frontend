@@ -10,7 +10,11 @@ import {
   toEditableDescriptionSheets,
   truncateSheetSourceLabel,
 } from "../boardDescription";
-import { getCanonicalEntityPicturePath } from "../canonicalEntities";
+import {
+  getCanonicalEntityMergeTarget,
+  getCanonicalEntityPicturePath,
+  isCanonicalEntityMerged,
+} from "../canonicalEntities";
 import { FILE_RES_BASE_URL } from "../fileDataSource";
 import "./NodeCard.css";
 import {
@@ -37,7 +41,7 @@ interface NodeInspectorProps {
   onSaveNode: (
     id: number,
     patch: {
-      CE_id: string;
+      ce_id: string;
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => Promise<void>;
@@ -53,6 +57,12 @@ function cloneEditableSheet(sheet: EditableBoardDescriptionSheet): EditableBoard
     relatedNodeIds: [...sheet.relatedNodeIds],
     c_ids: [...sheet.c_ids],
   };
+}
+
+function formatCanonicalEntityOptionLabel(entity: CanonicalEntity): string {
+  const mergedTarget = getCanonicalEntityMergeTarget(entity);
+  const baseLabel = `${entity.name} (${entity.entity_type})`;
+  return mergedTarget ? `${baseLabel} [MERGED -> ${mergedTarget}]` : baseLabel;
 }
 
 export const NodeInspector: React.FC<NodeInspectorProps> = ({
@@ -97,12 +107,29 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
     return picturePath ? `${FILE_RES_BASE_URL}/res/${picturePath}` : null;
   }, [selectedCanonicalEntity]);
 
+  const selectedCanonicalEntityMergeTarget = useMemo(
+    () =>
+      selectedCanonicalEntity
+        ? getCanonicalEntityMergeTarget(selectedCanonicalEntity)
+        : null,
+    [selectedCanonicalEntity]
+  );
+  const selectedCanonicalEntityTextColor =
+    selectedCanonicalEntity && isCanonicalEntityMerged(selectedCanonicalEntity)
+      ? "#777"
+      : "#222";
+
   const filteredCanonicalEntities = useMemo(() => {
     const normalizedFilter = normalizeSearchValue(canonicalEntityFilter);
     if (!normalizedFilter) return canonicalEntities;
 
     const filteredEntities = canonicalEntities.filter((entity) => {
-      const haystack = [entity.name, entity.en_id, entity.entity_type]
+      const haystack = [
+        entity.name,
+        entity.en_id,
+        entity.entity_type,
+        getCanonicalEntityMergeTarget(entity) ?? "",
+      ]
         .map((value) => normalizeSearchValue(value))
         .join(" ");
 
@@ -121,7 +148,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
 
   useEffect(() => {
     if (node) {
-      setSelectedCanonicalEntityId(node.CE_id ?? "");
+      setSelectedCanonicalEntityId(node.ce_id ?? "");
       setCanonicalEntityFilter("");
       setSheets(toEditableDescriptionSheets(descriptionSheets));
     } else {
@@ -283,6 +310,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
       description: sheetEditor.draft.description.trim(),
       timecode: sheetEditor.draft.timecode.trim(),
       relatedNodeIds: [...sheetEditor.draft.relatedNodeIds],
+      isNodeOwned: sheetEditor.draft.relatedNodeIds.length === 0,
     };
 
     if (!normalizedSheet.description) {
@@ -334,7 +362,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
 
     try {
       await onSaveNode(node.node_id, {
-        CE_id: selectedCanonicalEntity.en_id,
+        ce_id: selectedCanonicalEntity.en_id,
         descriptionSheets: sheets,
       });
     } catch (saveError: unknown) {
@@ -471,6 +499,10 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               borderRadius: 6,
               border: "1px solid #ccc",
               boxSizing: "border-box",
+              color:
+                selectedCanonicalEntity && isCanonicalEntityMerged(selectedCanonicalEntity)
+                  ? "#777"
+                  : "#222",
               backgroundColor:
                 disabled || canonicalEntities.length === 0 ? "#f2f2f2" : "#fff",
             }}
@@ -482,8 +514,14 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               </option>
             )}
             {filteredCanonicalEntities.map((entity) => (
-              <option key={entity.en_id} value={entity.en_id}>
-                {entity.name} ({entity.entity_type})
+              <option
+                key={entity.en_id}
+                value={entity.en_id}
+                style={{
+                  color: isCanonicalEntityMerged(entity) ? "#777" : "#222",
+                }}
+              >
+                {formatCanonicalEntityOptionLabel(entity)}
               </option>
             ))}
           </select>
@@ -547,6 +585,10 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             border: "1px solid #ddd",
             background: "#fff",
             padding: "12px 12px 14px",
+            color:
+              selectedCanonicalEntity && isCanonicalEntityMerged(selectedCanonicalEntity)
+                ? "#666"
+                : "#222",
           }}
         >
           <div style={{ fontSize: 12, fontWeight: 700 }}>Что подтянется в ноду из CE</div>
@@ -593,24 +635,41 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <div style={{ fontSize: 12, color: "#666" }}>Имя</div>
-                <div style={{ fontSize: 13, color: "#222", fontWeight: 600 }}>
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: selectedCanonicalEntityTextColor,
+                    fontWeight: 600,
+                  }}
+                >
                   {selectedCanonicalEntity.name || "Без имени"}
                 </div>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <div style={{ fontSize: 12, color: "#666" }}>Тип</div>
-                <div style={{ fontSize: 13, color: "#222" }}>
+                <div style={{ fontSize: 13, color: selectedCanonicalEntityTextColor }}>
                   {selectedCanonicalEntity.entity_type}
                 </div>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <div style={{ fontSize: 12, color: "#666" }}>en_id</div>
-                <div style={{ fontSize: 13, color: "#222" }}>
+                <div style={{ fontSize: 13, color: selectedCanonicalEntityTextColor }}>
                   {selectedCanonicalEntity.en_id}
                 </div>
               </div>
+
+              {selectedCanonicalEntityMergeTarget && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div style={{ fontSize: 11, color: "#b24444", letterSpacing: "0.08em" }}>
+                    MERGED
+                  </div>
+                  <div style={{ fontSize: 12, color: "#777" }}>
+                    merged_to: {selectedCanonicalEntityMergeTarget}
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div style={{ fontSize: 12, color: "#666", lineHeight: 1.45 }}>
@@ -854,26 +913,6 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
               </label>
             </div>
 
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={sheetEditor.draft.isNodeOwned}
-                onChange={(event) =>
-                  handleEditorDraftChange({ isNodeOwned: event.target.checked })
-                }
-              />
-              <span>Сохранить этот чанк и как собственный текст текущей ноды</span>
-            </label>
-
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 700 }}>Связанные ноды</div>
               <div
@@ -914,8 +953,8 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
                   ))
                 ) : (
                   <div style={{ fontSize: 12, color: "#666" }}>
-                    У текущей ноды пока нет связанных соседей, поэтому листок можно
-                    сохранить только в неё саму.
+                    У текущей ноды пока нет связанных соседей, поэтому листок будет
+                    сохранён только в текст самой ноды.
                   </div>
                 )}
               </div>

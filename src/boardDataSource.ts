@@ -1,6 +1,7 @@
 import type {
   BoardChunk,
   BoardEdge,
+  FreeIds,
   BoardNode,
   BoardVersion,
   CanonicalEntity,
@@ -35,6 +36,7 @@ export interface BoardDataSource {
   getNodes(boardId: string, version?: number | string): Promise<BoardNode[]>;
   getVersions(boardId: string): Promise<BoardVersion[]>;
   getCanonicalEntities(boardId: string): Promise<CanonicalEntity[]>;
+  getFreeIds(boardId: string): Promise<FreeIds>;
   createVersion(payload: {
     version: number;
     name: string;
@@ -93,6 +95,48 @@ function normalizePublishedFlag(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+function normalizeOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+
+  const normalizedValue = value.trim();
+  return normalizedValue.length > 0 ? normalizedValue : null;
+}
+
+function normalizeNumericId(value: unknown): number | null {
+  const normalizedValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(normalizedValue)) return null;
+
+  return Math.trunc(normalizedValue);
+}
+
+async function readErrorMessage(res: Response): Promise<string | null> {
+  try {
+    const payload = (await res.clone().json()) as unknown;
+    if (typeof payload === "string" && payload.trim()) {
+      return payload.trim();
+    }
+
+    if (payload && typeof payload === "object") {
+      const record = payload as Record<string, unknown>;
+      const candidate =
+        record.detail ?? record.message ?? record.error ?? record.status;
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+  } catch {
+    // ignore JSON parse errors and fall back to text
+  }
+
+  try {
+    const text = await res.text();
+    const normalizedText = text.trim();
+    return normalizedText.length > 0 ? normalizedText : null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeChunk(rawChunk: unknown): BoardChunk | null {
   if (!rawChunk || typeof rawChunk !== "object") return null;
 
@@ -138,7 +182,10 @@ function normalizeNode(rawNode: unknown): BoardNode | null {
 
   return {
     node_id: rawNodeId,
-    CE_id: typeof node.CE_id === "string" ? node.CE_id.trim() : "",
+    ce_id:
+      (typeof node.ce_id === "string" ? node.ce_id : null)?.trim() ??
+      (typeof node.CE_id === "string" ? node.CE_id : null)?.trim() ??
+      "",
     name: typeof node.name === "string" ? node.name : "",
     pos_x: rawPosX,
     pos_y: rawPosY,
@@ -194,10 +241,59 @@ function normalizeCanonicalEntity(rawEntity: unknown): CanonicalEntity | null {
     name: typeof entity.name === "string" ? entity.name.trim() : "",
     entity_type: normalizeNodeType(entity.entity_type),
     picture_paths: normalizePicturePaths(entity.picture_paths),
+    merged_to: normalizeOptionalString(entity.merged_to),
+  };
+}
+
+function normalizeFreeIds(rawValue: unknown): FreeIds | null {
+  if (!rawValue || typeof rawValue !== "object") return null;
+
+  const record = rawValue as Record<string, unknown>;
+  const nodeId = normalizeNumericId(record.node_id);
+  const edgeId = normalizeNumericId(record.edge_id);
+  const chunkId = normalizeNumericId(record.chunk_id);
+
+  if (nodeId === null || edgeId === null || chunkId === null) {
+    return null;
+  }
+
+  return {
+    node_id: nodeId,
+    edge_id: edgeId,
+    chunk_id: chunkId,
+  };
+}
+
+function serializeCanonicalEntity(entity: CanonicalEntity): Record<string, unknown> {
+  return {
+    en_id: entity.en_id,
+    name: entity.name,
+    entity_type: entity.entity_type,
+    picture_paths: entity.picture_paths,
+    merged_to: normalizeOptionalString(entity.merged_to),
   };
 }
 
 class HttpBoardDataSource implements BoardDataSource {
+  private async syncCanonicalEntitiesRequest(
+    boardId: string,
+    entities: CanonicalEntity[]
+  ): Promise<Response> {
+    const url = `${API_BASE_URL}/graph/canonical-entities`;
+
+    console.log("[BoardDataSource] Синхронизируем canonical-entities", {
+      boardId,
+      url,
+      entities,
+    });
+
+    return fetch(url, {
+      method: "PUT",
+      headers: getMutationHeaders(),
+      body: JSON.stringify(entities.map((entity) => serializeCanonicalEntity(entity))),
+    });
+  }
+
   async getCurrentBoard(boardId: string, version?: number | string): Promise<BoardGraph> {
     let url = `${API_BASE_URL}/graph/board`;
     if (version !== undefined) {
@@ -378,6 +474,42 @@ class HttpBoardDataSource implements BoardDataSource {
     }
   }
 
+  async getFreeIds(boardId: string): Promise<FreeIds> {
+    const url = `${API_BASE_URL}/graph/free-ids`;
+
+    console.log("[BoardDataSource] Запрашиваем free-ids", {
+      boardId,
+      url,
+    });
+
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!res.ok) {
+        console.error("[BoardDataSource] Ошибка при запросе free-ids", res.status, res.statusText);
+        throw new Error(`HTTP error ${res.status}: ${res.statusText || "Unknown error"}`);
+      }
+
+      const data = (await res.json()) as Record<string, unknown>;
+      const freeIds = normalizeFreeIds(data);
+
+      if (!freeIds) {
+        throw new Error("Некорректный ответ сервера при запросе free-ids.");
+      }
+
+      console.log("[BoardDataSource] Free-ids получены", freeIds);
+      return freeIds;
+    } catch (error) {
+      console.error("[BoardDataSource] Ошибка при запросе free-ids", error);
+      throw error;
+    }
+  }
+
   async createVersion(payload: {
     version: number;
     name: string;
@@ -464,7 +596,7 @@ class HttpBoardDataSource implements BoardDataSource {
           version: payload.version,
           nodes: payload.nodes.map((node) => ({
             node_id: node.node_id,
-            CE_id: node.CE_id,
+            ce_id: node.ce_id,
             name: node.name,
             pos_x: node.pos_x,
             pos_y: node.pos_y,
@@ -486,12 +618,16 @@ class HttpBoardDataSource implements BoardDataSource {
 
       if (!res.ok) {
         handleAuthFailure(res);
+        const errorMessage = await readErrorMessage(res);
         console.error(
           "[BoardDataSource] Сервер ответил ошибкой при публикации",
           res.status,
-          res.statusText
+          res.statusText,
+          errorMessage
         );
-        throw new Error(`HTTP error ${res.status}: ${res.statusText || "Unknown error"}`);
+        throw new Error(
+          errorMessage ?? `HTTP error ${res.status}: ${res.statusText || "Unknown error"}`
+        );
       }
 
       const data = await res.json();
@@ -506,28 +642,81 @@ class HttpBoardDataSource implements BoardDataSource {
     boardId: string,
     entities: CanonicalEntity[]
   ): Promise<CanonicalEntitiesSyncResult> {
-    console.log("[BoardDataSource] Placeholder sync для canonical-entities", {
-      boardId,
-      entities,
-    });
+    try {
+      const res = await this.syncCanonicalEntitiesRequest(boardId, entities);
 
-    // TODO: заменить на реальный endpoint, когда backend будет готов.
-    await Promise.resolve();
-    return { persisted: false };
+      if (!res.ok) {
+        handleAuthFailure(res);
+        const errorMessage = await readErrorMessage(res);
+        console.error(
+          "[BoardDataSource] Ошибка при синхронизации canonical-entities",
+          res.status,
+          res.statusText,
+          errorMessage
+        );
+        throw new Error(
+          errorMessage ?? `HTTP error ${res.status}: ${res.statusText || "Unknown error"}`
+        );
+      }
+
+      await res.json().catch(() => null);
+      console.log("[BoardDataSource] Canonical-entities успешно синхронизированы");
+      return { persisted: true };
+    } catch (error) {
+      console.error("[BoardDataSource] Ошибка при синхронизации canonical-entities", error);
+      throw error;
+    }
   }
 
   async deleteCanonicalEntity(
     boardId: string,
     entityId: string
   ): Promise<CanonicalEntityDeleteResult> {
-    console.log("[BoardDataSource] Placeholder delete для canonical-entity", {
+    console.log("[BoardDataSource] Удаляем canonical-entity", {
       boardId,
       entityId,
     });
 
-    // TODO: заменить на реальный endpoint, когда backend будет готов.
-    await Promise.resolve();
-    return { outcome: "placeholder" };
+    try {
+      const currentEntities = await this.getCanonicalEntities(boardId);
+      const nextEntities = currentEntities.filter((entity) => entity.en_id !== entityId);
+
+      if (nextEntities.length === currentEntities.length) {
+        return { outcome: "deleted" };
+      }
+
+      const res = await this.syncCanonicalEntitiesRequest(boardId, nextEntities);
+
+      if (res.status === 406) {
+        handleAuthFailure(res);
+        console.warn(
+          "[BoardDataSource] Удаление canonical-entity заблокировано бизнес-правилами",
+          entityId
+        );
+        return { outcome: "blocked" };
+      }
+
+      if (!res.ok) {
+        handleAuthFailure(res);
+        const errorMessage = await readErrorMessage(res);
+        console.error(
+          "[BoardDataSource] Ошибка при удалении canonical-entity",
+          res.status,
+          res.statusText,
+          errorMessage
+        );
+        throw new Error(
+          errorMessage ?? `HTTP error ${res.status}: ${res.statusText || "Unknown error"}`
+        );
+      }
+
+      await res.json().catch(() => null);
+      console.log("[BoardDataSource] Canonical-entity успешно удалена", entityId);
+      return { outcome: "deleted" };
+    } catch (error) {
+      console.error("[BoardDataSource] Ошибка при удалении canonical-entity", error);
+      throw error;
+    }
   }
 }
 
