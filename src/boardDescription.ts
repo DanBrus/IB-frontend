@@ -1,3 +1,4 @@
+import { formatBoardVersion } from "./boardTypes";
 import type { BoardChunk, BoardEdge, BoardNode } from "./boardTypes";
 
 export type BoardDescriptionSheet = {
@@ -5,6 +6,7 @@ export type BoardDescriptionSheet = {
   description: string;
   chunk_priority: number;
   timecode: string;
+  boardSources: number[];
   relatedNodeIds: number[];
   relatedNodeNames: string[];
   isNodeOwned: boolean;
@@ -25,6 +27,7 @@ type DescriptionOrigin = {
   description: string;
   chunk_priority: number;
   timecode: string;
+  boardSource: number | null;
   relatedNodeId: number | null;
   isNodeOwned: boolean;
   c_id: number;
@@ -69,9 +72,26 @@ export function sortChunks(chunks: BoardChunk[]): BoardChunk[] {
   return [...chunks].sort(
     (left, right) =>
       left.chunk_priority - right.chunk_priority ||
+      (left.board_source ?? Number.NEGATIVE_INFINITY) -
+        (right.board_source ?? Number.NEGATIVE_INFINITY) ||
       left.c_id - right.c_id ||
       left.description.localeCompare(right.description, "ru")
   );
+}
+
+export function getSheetBoardSourceLabel(boardSources: number[]): string {
+  const normalizedSources = [...new Set(boardSources)]
+    .filter((boardSource) => Number.isFinite(boardSource))
+    .sort((left, right) => left - right);
+
+  if (normalizedSources.length === 0) return "";
+  if (normalizedSources.length === 1) {
+    return `Песнь ${formatBoardVersion(normalizedSources[0])}`;
+  }
+
+  return `Песни ${normalizedSources
+    .map((boardSource) => formatBoardVersion(boardSource))
+    .join(", ")}`;
 }
 
 export function getConnectedNodeIds(nodeId: number, edges: BoardEdge[]): number[] {
@@ -113,6 +133,10 @@ export function buildNodeDescriptionSheets(
       description,
       chunk_priority: chunk.chunk_priority,
       timecode: chunk.timecode,
+      boardSource:
+        typeof chunk.board_source === "number" && Number.isFinite(chunk.board_source)
+          ? chunk.board_source
+          : null,
       relatedNodeId: null,
       isNodeOwned: true,
       c_id: chunk.c_id,
@@ -131,6 +155,10 @@ export function buildNodeDescriptionSheets(
         description,
         chunk_priority: chunk.chunk_priority,
         timecode: chunk.timecode,
+        boardSource:
+          typeof chunk.board_source === "number" && Number.isFinite(chunk.board_source)
+            ? chunk.board_source
+            : null,
         relatedNodeId,
         isNodeOwned: false,
         c_id: chunk.c_id,
@@ -153,6 +181,7 @@ export function buildNodeDescriptionSheets(
       description: string;
       chunk_priority: number;
       timecode: string;
+      boardSources: Set<number>;
       relatedNodeIds: Set<number>;
       isNodeOwned: boolean;
       c_ids: Set<number>;
@@ -166,6 +195,8 @@ export function buildNodeDescriptionSheets(
     if (!existing) {
       const relatedNodeIds = new Set<number>();
       if (origin.relatedNodeId !== null) relatedNodeIds.add(origin.relatedNodeId);
+      const boardSources = new Set<number>();
+      if (origin.boardSource !== null) boardSources.add(origin.boardSource);
 
       const cIds = new Set<number>();
       if (origin.c_id > 0) cIds.add(origin.c_id);
@@ -175,6 +206,7 @@ export function buildNodeDescriptionSheets(
         description: origin.description,
         chunk_priority: origin.chunk_priority,
         timecode: origin.timecode,
+        boardSources,
         relatedNodeIds,
         isNodeOwned: origin.isNodeOwned,
         c_ids: cIds,
@@ -187,6 +219,7 @@ export function buildNodeDescriptionSheets(
     if (!existing.timecode && origin.timecode) existing.timecode = origin.timecode;
     existing.isNodeOwned ||= origin.isNodeOwned;
     existing.order = Math.min(existing.order, origin.order);
+    if (origin.boardSource !== null) existing.boardSources.add(origin.boardSource);
     if (origin.relatedNodeId !== null) existing.relatedNodeIds.add(origin.relatedNodeId);
     if (origin.c_id > 0) existing.c_ids.add(origin.c_id);
   });
@@ -206,6 +239,7 @@ export function buildNodeDescriptionSheets(
         description: sheet.description,
         chunk_priority: sheet.chunk_priority,
         timecode: sheet.timecode,
+        boardSources: [...sheet.boardSources.values()].sort((left, right) => left - right),
         relatedNodeIds,
         relatedNodeNames: relatedNodeIds
           .map((relatedNodeId) => nodesById.get(relatedNodeId)?.name ?? "")

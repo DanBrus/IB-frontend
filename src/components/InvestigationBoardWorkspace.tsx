@@ -2,8 +2,13 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "re
 import type { BoardMode } from "./BoardToolbar";
 import type { EditableBoardDescriptionSheet } from "../boardDescription";
 import { buildNodeDescriptionSheets, getConnectedNodes } from "../boardDescription";
+import {
+  formatCanonicalEntityId,
+  resolveCanonicalEntityRootId,
+} from "../canonicalEntities";
 import type {
   BoardAccessMode,
+  BoardViewMode,
   BoardEdge,
   BoardNode,
   CanonicalEntity,
@@ -55,6 +60,8 @@ interface InvestigationBoardWorkspaceProps {
   mode: BoardMode;
   selectedNode: BoardNode | null;
   accessMode: BoardAccessMode;
+  boardViewMode: BoardViewMode;
+  currentAnalysisCeId: number | null;
   onBoardClick: (x: number, y: number) => void;
   onNodeClick: (node: BoardNode) => void;
   onNodePositionChange?: (id: number, x: number, y: number) => void;
@@ -65,6 +72,7 @@ interface InvestigationBoardWorkspaceProps {
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => Promise<void>;
+  onOpenCanonicalEntityAnalysis: (ceId: number) => Promise<void>;
 }
 
 export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspaceProps> = ({
@@ -74,10 +82,13 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   mode,
   selectedNode,
   accessMode,
+  boardViewMode,
+  currentAnalysisCeId,
   onBoardClick,
   onNodeClick,
   onNodePositionChange,
   onSelectedNodeSave,
+  onOpenCanonicalEntityAnalysis,
 }) => {
   const isMobile = useIsMobile();
   const minScale = isMobile ? MOBILE_MIN_SCALE : DESKTOP_MIN_SCALE;
@@ -94,6 +105,12 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
     nodes.forEach((node) => map.set(node.node_id, node));
     return map;
   }, [nodes]);
+
+  const canonicalEntitiesById = useMemo(() => {
+    const map = new Map<number, CanonicalEntity>();
+    canonicalEntities.forEach((entity) => map.set(entity.en_id, entity));
+    return map;
+  }, [canonicalEntities]);
 
   const boardBounds = useMemo(() => {
     if (nodes.length === 0) {
@@ -135,6 +152,40 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
     () => buildNodeDescriptionSheets(selectedNode, nodes, edges),
     [selectedNode, nodes, edges]
   );
+  const readPanelRootCeId = useMemo(
+    () => resolveCanonicalEntityRootId(readPanelNode?.ce_id ?? null, canonicalEntities),
+    [canonicalEntities, readPanelNode]
+  );
+  const readPanelRootCe = useMemo(
+    () =>
+      readPanelRootCeId !== null
+        ? canonicalEntitiesById.get(readPanelRootCeId) ?? null
+        : null,
+    [canonicalEntitiesById, readPanelRootCeId]
+  );
+  const readPanelAnalysisButtonTitle = useMemo(() => {
+    if (!readPanelNode) return undefined;
+
+    if (readPanelRootCeId === null) {
+      return "Для этой ноды не удалось определить canonical entity.";
+    }
+
+    const targetLabel =
+      readPanelRootCe?.name?.trim() ||
+      formatCanonicalEntityId(readPanelRootCeId);
+
+    if (boardViewMode === "analysis" && currentAnalysisCeId === readPanelRootCeId) {
+      return `Аналитическая доска по сущности "${targetLabel}" уже открыта.`;
+    }
+
+    return `Открыть аналитическую доску по сущности "${targetLabel}".`;
+  }, [
+    boardViewMode,
+    currentAnalysisCeId,
+    readPanelNode,
+    readPanelRootCe,
+    readPanelRootCeId,
+  ]);
   const connectedNodes = useMemo(
     () => (selectedNode ? getConnectedNodes(selectedNode.node_id, nodes, edges) : []),
     [selectedNode, nodes, edges]
@@ -422,6 +473,17 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
     setReadPanelNodeId(null);
   };
 
+  const handleReadPanelOpenAnalysisBoard = () => {
+    if (
+      readPanelRootCeId === null ||
+      (boardViewMode === "analysis" && currentAnalysisCeId === readPanelRootCeId)
+    ) {
+      return;
+    }
+
+    void onOpenCanonicalEntityAnalysis(readPanelRootCeId);
+  };
+
   const handleViewportWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (isMobile || !e.altKey) return;
 
@@ -556,6 +618,14 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
           descriptionSheets={readPanelSheets}
           onClose={handleReadPanelClose}
           mobile={isMobile}
+          showAnalysisButton
+          onOpenAnalysisBoard={
+            readPanelRootCeId !== null &&
+            !(boardViewMode === "analysis" && currentAnalysisCeId === readPanelRootCeId)
+              ? handleReadPanelOpenAnalysisBoard
+              : undefined
+          }
+          analysisButtonTitle={readPanelAnalysisButtonTitle}
         />
       )}
     </div>

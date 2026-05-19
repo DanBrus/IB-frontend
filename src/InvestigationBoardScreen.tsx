@@ -9,6 +9,7 @@ import {
 } from "./canonicalEntities";
 import type {
   BoardAccessMode,
+  BoardViewMode,
   BoardEdge,
   FreeIds,
   BoardNode,
@@ -34,6 +35,13 @@ interface InvestigationBoardScreenProps {
   versions: BoardVersion[];
   currentVersion: number;
   accessMode: BoardAccessMode;
+  boardViewMode: BoardViewMode;
+  currentAnalysisCeId: number | null;
+  analysisBoardInfo: {
+    version: number;
+    name: string | null;
+    description: string | null;
+  } | null;
   onChangeVersion: (version: number) => void;
   onCreateVersion: (payload: {
     version: number;
@@ -55,6 +63,7 @@ interface InvestigationBoardScreenProps {
     entityId: number
   ) => Promise<CanonicalEntityDeleteResult>;
   onRequestEditMode: () => void;
+  onOpenCanonicalEntityAnalysis: (ceId: number) => Promise<void>;
 }
 
 export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> = ({
@@ -65,6 +74,9 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   versions,
   currentVersion,
   accessMode,
+  boardViewMode,
+  currentAnalysisCeId,
+  analysisBoardInfo,
   onChangeVersion,
   onCreateVersion,
   onDeleteVersion,
@@ -72,6 +84,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   onCanonicalEntitiesChange,
   onCanonicalEntityDelete,
   onRequestEditMode,
+  onOpenCanonicalEntityAnalysis,
 }) => {
   const [nodes, setNodes] = useState<BoardNode[]>(initialNodes);
   const [edges, setEdges] = useState<BoardEdge[]>(initialEdges);
@@ -480,6 +493,9 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       currentVersion={currentVersion}
       currentVersionIsPublished={isPublished}
       accessMode={accessMode}
+      boardViewMode={boardViewMode}
+      currentAnalysisCeId={currentAnalysisCeId}
+      analysisBoardInfo={analysisBoardInfo}
       onVersionChange={handleVersionChange}
       onCreateVersion={onCreateVersion}
       onDeleteVersion={onDeleteVersion}
@@ -500,6 +516,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       onCreateCanonicalEntityDraft={createCanonicalEntityDraft}
       onCanonicalEntitiesManagerClose={handleCanonicalEntitiesDialogClose}
       onUploadImage={handleUploadImage}
+      onOpenCanonicalEntityAnalysis={onOpenCanonicalEntityAnalysis}
     />
   );
 };

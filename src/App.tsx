@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { InvestigationBoardScreen } from "./InvestigationBoardScreen";
 import type {
   BoardAccessMode,
+  BoardViewMode,
   BoardEdge,
   BoardNode,
   BoardVersion,
@@ -14,6 +15,7 @@ import type {
 } from "./boardDataSource";
 import { boardDataSource } from "./boardDataSource";
 import { authClient } from "./auth/authClient";
+import { getNodeCardEntitySizes } from "./nodeCardMetrics";
 
 const AUTH_REJECTED_MESSAGE = "Токен безопасности истёк или был введён неверный код безопасности.";
 const BOARD_ID = "demo-board";
@@ -24,9 +26,28 @@ type BoardSnapshot = {
   versions: BoardVersion[];
   canonicalEntities: CanonicalEntity[];
   currentVersion: number | null;
+  boardName?: string | null;
+};
+
+type AnalysisBoardInfo = {
+  version: number;
+  name: string | null;
+  description: string | null;
 };
 
 type VersionFallbackStrategy = "min" | "max";
+
+function getRegularBoardTitle(boardName?: string | null): string {
+  const normalizedBoardName = typeof boardName === "string" ? boardName.trim() : "";
+  return normalizedBoardName || "Доска расследований";
+}
+
+function getAnalysisBoardTitle(boardName?: string | null): string {
+  const normalizedBoardName = typeof boardName === "string" ? boardName.trim() : "";
+  return normalizedBoardName
+    ? `Аналитическая доска: ${normalizedBoardName}`
+    : "Аналитическая доска";
+}
 
 function isVersionVisible(version: BoardVersion, accessMode: BoardAccessMode): boolean {
   return accessMode === "edit" || version.is_published !== false;
@@ -83,6 +104,7 @@ async function loadBoardSnapshot(
       versions: versionsList,
       canonicalEntities: canonicalEntitiesList,
       currentVersion: null,
+      boardName: null,
     };
   }
 
@@ -94,6 +116,7 @@ async function loadBoardSnapshot(
     versions: versionsList,
     canonicalEntities: canonicalEntitiesList,
     currentVersion: resolvedVersion,
+    boardName: graph.board_name ?? null,
   };
 }
 
@@ -103,6 +126,10 @@ export default function App() {
   const [versions, setVersions] = useState<BoardVersion[]>([]);
   const [canonicalEntities, setCanonicalEntities] = useState<CanonicalEntity[]>([]);
   const [currentVersion, setCurrentVersion] = useState<number | null>(null);
+  const [boardViewMode, setBoardViewMode] = useState<BoardViewMode>("standard");
+  const [analysisCeId, setAnalysisCeId] = useState<number | null>(null);
+  const [analysisBoardInfo, setAnalysisBoardInfo] = useState<AnalysisBoardInfo | null>(null);
+  const [boardTitle, setBoardTitle] = useState("Доска расследований");
 
   const [accessMode, setAccessMode] = useState<BoardAccessMode>("read");
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
@@ -119,6 +146,10 @@ export default function App() {
     setVersions(snapshot.versions);
     setCanonicalEntities(snapshot.canonicalEntities);
     setCurrentVersion(snapshot.currentVersion);
+    setBoardViewMode("standard");
+    setAnalysisCeId(null);
+    setAnalysisBoardInfo(null);
+    setBoardTitle(getRegularBoardTitle(snapshot.boardName));
   };
 
   useEffect(() => {
@@ -146,7 +177,8 @@ export default function App() {
   }, []);
 
   const handleChangeVersion = async (version: number) => {
-    const nextVersion = resolveCurrentVersion(versions, version, accessMode);
+    const effectiveAccessMode = boardViewMode === "analysis" ? "read" : accessMode;
+    const nextVersion = resolveCurrentVersion(versions, version, effectiveAccessMode);
     if (nextVersion === null || nextVersion !== version) return;
 
     setLoading(true);
@@ -157,9 +189,46 @@ export default function App() {
       setNodes(graph.nodes);
       setEdges(graph.edges);
       setCurrentVersion(nextVersion);
+      setBoardViewMode("standard");
+      setAnalysisCeId(null);
+      setAnalysisBoardInfo(null);
+      setBoardTitle(getRegularBoardTitle(graph.board_name));
       setLoading(false);
     } catch {
       setError("Не удалось загрузить выбранную версию доски");
+      setLoading(false);
+    }
+  };
+
+  const handleOpenCanonicalEntityAnalysis = async (ceId: number) => {
+    if (boardViewMode === "analysis" && analysisCeId === ceId) return;
+
+    setLoading(true);
+
+    try {
+      const entitySizes = await getNodeCardEntitySizes();
+      const graph = await boardDataSource.getCanonicalEntityAnalysis(BOARD_ID, {
+        ceId,
+        entitySizes,
+      });
+
+      setNodes(graph.nodes);
+      setEdges(graph.edges);
+      setBoardViewMode("analysis");
+      setAnalysisCeId(ceId);
+      setAnalysisBoardInfo({
+        version: graph.version ?? 0,
+        name: graph.board_name ?? null,
+        description: graph.description ?? null,
+      });
+      setBoardTitle(getAnalysisBoardTitle(graph.board_name));
+    } catch (analysisError: unknown) {
+      const message =
+        analysisError instanceof Error
+          ? analysisError.message
+          : "Не удалось загрузить аналитическую доску по сущности.";
+      window.alert(message);
+    } finally {
       setLoading(false);
     }
   };
@@ -265,6 +334,7 @@ export default function App() {
   };
 
   const enterEditMode = () => {
+    if (boardViewMode === "analysis") return;
     setAccessMode("edit");
     setAuthDialogOpen(false);
     setSecretCode("");
@@ -272,7 +342,7 @@ export default function App() {
   };
 
   const handleRequestEditMode = async () => {
-    if (accessMode === "edit" || authChecking) return;
+    if (boardViewMode === "analysis" || accessMode === "edit" || authChecking) return;
 
     setAuthError(null);
 
@@ -338,7 +408,8 @@ export default function App() {
     }
   };
 
-  const visibleVersions = getVisibleVersions(versions, accessMode);
+  const effectiveAccessMode = boardViewMode === "analysis" ? "read" : accessMode;
+  const visibleVersions = getVisibleVersions(versions, effectiveAccessMode);
 
   if (loading) return <div>Загружаем доску…</div>;
   if (error) return <div>{error}</div>;
@@ -347,14 +418,21 @@ export default function App() {
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
       <InvestigationBoardScreen
-        key={currentVersion}
-        title="Доска расследований"
+        key={
+          boardViewMode === "analysis"
+            ? `analysis:${analysisCeId ?? "none"}:${currentVersion}`
+            : `board:${currentVersion}`
+        }
+        title={boardTitle}
         initialNodes={nodes}
         initialEdges={edges}
         initialCanonicalEntities={canonicalEntities}
         versions={visibleVersions}
         currentVersion={currentVersion}
-        accessMode={accessMode}
+        accessMode={effectiveAccessMode}
+        boardViewMode={boardViewMode}
+        currentAnalysisCeId={analysisCeId}
+        analysisBoardInfo={analysisBoardInfo}
         onChangeVersion={handleChangeVersion}
         onCreateVersion={handleCreateVersion}
         onDeleteVersion={handleDeleteVersion}
@@ -362,6 +440,7 @@ export default function App() {
         onCanonicalEntitiesChange={handleCanonicalEntitiesChange}
         onCanonicalEntityDelete={handleCanonicalEntityDelete}
         onRequestEditMode={handleRequestEditMode}
+        onOpenCanonicalEntityAnalysis={handleOpenCanonicalEntityAnalysis}
       />
 
       {authDialogOpen && (

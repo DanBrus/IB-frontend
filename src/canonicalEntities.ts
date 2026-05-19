@@ -24,6 +24,40 @@ export function isCanonicalEntityMerged(entity: CanonicalEntity): boolean {
   return getCanonicalEntityMergeTarget(entity) !== null;
 }
 
+export function resolveCanonicalEntityRootId(
+  entityId: number | null | undefined,
+  entities: CanonicalEntity[]
+): number | null {
+  if (typeof entityId !== "number" || !Number.isFinite(entityId)) return null;
+
+  const entitiesById = new Map(
+    entities.map((entity) => [entity.en_id, entity] as const)
+  );
+  const visited = new Set<number>();
+  let currentEntityId: number | null = entityId;
+
+  while (currentEntityId !== null) {
+    if (visited.has(currentEntityId)) {
+      return null;
+    }
+    visited.add(currentEntityId);
+
+    const currentEntity = entitiesById.get(currentEntityId);
+    if (!currentEntity) {
+      return currentEntityId;
+    }
+
+    const nextEntityId = getCanonicalEntityMergeTarget(currentEntity);
+    if (nextEntityId === null) {
+      return currentEntityId;
+    }
+
+    currentEntityId = nextEntityId;
+  }
+
+  return null;
+}
+
 export function sortCanonicalEntities(entities: CanonicalEntity[]): CanonicalEntity[] {
   return [...entities].sort(
     (left, right) =>

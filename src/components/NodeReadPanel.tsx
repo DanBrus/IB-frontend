@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   type BoardDescriptionSheet,
+  getSheetBoardSourceLabel,
   getSheetSourceLabel,
   truncateSheetSourceLabel,
 } from "../boardDescription";
@@ -20,6 +21,9 @@ interface NodeReadPanelProps {
   descriptionSheets: BoardDescriptionSheet[];
   onClose: () => void;
   mobile?: boolean;
+  showAnalysisButton?: boolean;
+  onOpenAnalysisBoard?: (() => void) | undefined;
+  analysisButtonTitle?: string | undefined;
 }
 
 const MOBILE_DRAG_CLOSE_THRESHOLD = 96;
@@ -30,6 +34,9 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
   descriptionSheets,
   onClose,
   mobile = false,
+  showAnalysisButton = false,
+  onOpenAnalysisBoard,
+  analysisButtonTitle,
 }) => {
   const [sheetState, setSheetState] = useState<MobileSheetState>("half");
   const [dragPointerId, setDragPointerId] = useState<number | null>(null);
@@ -183,22 +190,34 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
       className="paper-stack"
       style={{
         padding: mobile ? "16px 14px calc(18px + env(safe-area-inset-bottom, 0px))" : "16px 10px 18px",
+        ["--paper-stack-bottom-gap" as string]: mobile
+          ? "calc(56px + env(safe-area-inset-bottom, 0px))"
+          : "24px",
       }}
     >
       {descriptionSheets.length > 0 ? (
         descriptionSheets.map((sheet) => {
+          const boardSourceLabel = getSheetBoardSourceLabel(sheet.boardSources);
           const fullSourceLabel = getSheetSourceLabel(sheet.relatedNodeNames);
           const previewSourceLabel = truncateSheetSourceLabel(fullSourceLabel);
+          const marginTitle = [boardSourceLabel, fullSourceLabel]
+            .filter((part) => part.trim().length > 0)
+            .join("\n");
 
           return (
             <article key={sheet.id} className="paper-note">
-              <div className="paper-note__margin" title={fullSourceLabel || undefined}>
-                <div className="paper-note__sources">
-                  {previewSourceLabel ? (
-                    <div className="paper-note__source">{previewSourceLabel}</div>
-                  ) : (
-                    <div className="paper-note__source paper-note__source--empty">&nbsp;</div>
-                  )}
+              <div className="paper-note__margin" title={marginTitle || undefined}>
+                <div className="paper-note__margin-content">
+                  {boardSourceLabel ? (
+                    <div className="paper-note__board-source">{boardSourceLabel}</div>
+                  ) : null}
+                  <div className="paper-note__sources">
+                    {previewSourceLabel ? (
+                      <div className="paper-note__source">{previewSourceLabel}</div>
+                    ) : (
+                      <div className="paper-note__source paper-note__source--empty">&nbsp;</div>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="paper-note__body">
@@ -276,25 +295,47 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
                 </div>
                 {node && <div style={{ marginTop: 2, fontSize: 12, opacity: 0.6 }}>{node.node_type}</div>}
               </div>
-              <button
-                type="button"
-                onClick={onClose}
-                style={{
-                  flexShrink: 0,
-                  width: 28,
-                  height: 28,
-                  borderRadius: 4,
-                  border: "1px solid #bbb",
-                  backgroundColor: "#fff",
-                  cursor: "pointer",
-                  fontSize: 18,
-                  lineHeight: "24px",
-                }}
-                aria-label="Закрыть описание"
-                title="Закрыть"
-              >
-                x
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                {showAnalysisButton && (
+                  <button
+                    type="button"
+                    onClick={onOpenAnalysisBoard}
+                    disabled={!onOpenAnalysisBoard}
+                    title={analysisButtonTitle}
+                    style={{
+                      padding: "6px 8px",
+                      borderRadius: 4,
+                      border: "1px solid #bbb",
+                      backgroundColor: onOpenAnalysisBoard ? "#fff" : "#f3f3f3",
+                      color: onOpenAnalysisBoard ? "#222" : "#999",
+                      cursor: onOpenAnalysisBoard ? "pointer" : "default",
+                      fontSize: 12,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Доска по сущности
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onClose}
+                  style={{
+                    flexShrink: 0,
+                    width: 28,
+                    height: 28,
+                    borderRadius: 4,
+                    border: "1px solid #bbb",
+                    backgroundColor: "#fff",
+                    cursor: "pointer",
+                    fontSize: 18,
+                    lineHeight: "24px",
+                  }}
+                  aria-label="Закрыть описание"
+                  title="Закрыть"
+                >
+                  x
+                </button>
+              </div>
             </div>
           </div>
 
@@ -349,25 +390,47 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
           </div>
           {node && <div style={{ marginTop: 2, fontSize: 12, opacity: 0.6 }}>{node.node_type}</div>}
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            flexShrink: 0,
-            width: 28,
-            height: 28,
-            borderRadius: 4,
-            border: "1px solid #bbb",
-            backgroundColor: "#fff",
-            cursor: "pointer",
-            fontSize: 18,
-            lineHeight: "24px",
-          }}
-          aria-label="Закрыть описание"
-          title="Закрыть"
-        >
-          x
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          {showAnalysisButton && (
+            <button
+              type="button"
+              onClick={onOpenAnalysisBoard}
+              disabled={!onOpenAnalysisBoard}
+              title={analysisButtonTitle}
+              style={{
+                padding: "6px 8px",
+                borderRadius: 4,
+                border: "1px solid #bbb",
+                backgroundColor: onOpenAnalysisBoard ? "#fff" : "#f3f3f3",
+                color: onOpenAnalysisBoard ? "#222" : "#999",
+                cursor: onOpenAnalysisBoard ? "pointer" : "default",
+                fontSize: 12,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Доска по сущности
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              flexShrink: 0,
+              width: 28,
+              height: 28,
+              borderRadius: 4,
+              border: "1px solid #bbb",
+              backgroundColor: "#fff",
+              cursor: "pointer",
+              fontSize: 18,
+              lineHeight: "24px",
+            }}
+            aria-label="Закрыть описание"
+            title="Закрыть"
+          >
+            x
+          </button>
+        </div>
       </div>
 
       <div style={{ flexGrow: 1, minHeight: 0, overflowY: "auto" }}>{descriptionContent}</div>

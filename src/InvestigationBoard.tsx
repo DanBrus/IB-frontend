@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import type { BoardMode } from "./components/BoardToolbar";
 import type {
   BoardAccessMode,
+  BoardViewMode,
   BoardEdge,
   BoardNode,
   BoardVersion,
@@ -14,6 +15,7 @@ import type {
   CanonicalEntityDeleteResult,
 } from "./boardDataSource";
 import { CanonicalEntityManager } from "./components/CanonicalEntityManager";
+import { CanonicalEntityBrowser } from "./components/CanonicalEntityBrowser";
 import { InvestigationBoardHeader } from "./components/InvestigationBoardHeader";
 import { InvestigationBoardToolbar } from "./components/InvestigationBoardToolbar";
 import { InvestigationBoardWorkspace } from "./components/InvestigationBoardWorkspace";
@@ -30,6 +32,13 @@ interface InvestigationBoardProps {
   currentVersion: number;
   currentVersionIsPublished: boolean;
   accessMode: BoardAccessMode;
+  boardViewMode: BoardViewMode;
+  currentAnalysisCeId: number | null;
+  analysisBoardInfo: {
+    version: number;
+    name: string | null;
+    description: string | null;
+  } | null;
   onVersionChange: (version: number) => void;
   onCreateVersion: (payload: {
     version: number;
@@ -70,6 +79,7 @@ interface InvestigationBoardProps {
   onCreateCanonicalEntityDraft: () => CanonicalEntity | null;
   onCanonicalEntitiesManagerClose: (shouldRefreshNodes: boolean) => void | Promise<void>;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
+  onOpenCanonicalEntityAnalysis: (ceId: number) => Promise<void>;
 }
 
 export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
@@ -83,6 +93,9 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   currentVersion,
   currentVersionIsPublished,
   accessMode,
+  boardViewMode,
+  currentAnalysisCeId,
+  analysisBoardInfo,
   onVersionChange,
   onCreateVersion,
   onDeleteVersion,
@@ -103,6 +116,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   onCreateCanonicalEntityDraft,
   onCanonicalEntitiesManagerClose,
   onUploadImage,
+  onOpenCanonicalEntityAnalysis,
 }) => {
   const [newVersionOpen, setNewVersionOpen] = useState(false);
   const [newVersion, setNewVersion] = useState("");
@@ -115,6 +129,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   const [deleteVersionError, setDeleteVersionError] = useState<string | null>(null);
   const [deleteVersionSaving, setDeleteVersionSaving] = useState(false);
   const [canonicalEntitiesOpen, setCanonicalEntitiesOpen] = useState(false);
+  const [canonicalEntityBrowserOpen, setCanonicalEntityBrowserOpen] = useState(false);
   const [canonicalEntityCreateRequestToken, setCanonicalEntityCreateRequestToken] = useState(0);
 
   const openNewVersionDialog = () => {
@@ -204,6 +219,15 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
     void onCanonicalEntitiesManagerClose(options?.shouldRefreshNodes ?? false);
   };
 
+  const openCanonicalEntityBrowser = () => {
+    if (accessMode !== "read") return;
+    setCanonicalEntityBrowserOpen(true);
+  };
+
+  const closeCanonicalEntityBrowser = () => {
+    setCanonicalEntityBrowserOpen(false);
+  };
+
   const handleQuickCreateCanonicalEntity = () => {
     if (accessMode !== "edit") return;
     setCanonicalEntitiesOpen(true);
@@ -217,9 +241,14 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         versions={versions}
         currentVersion={currentVersion}
         accessMode={accessMode}
+        boardViewMode={boardViewMode}
+        analysisBoardInfo={analysisBoardInfo}
         onVersionChange={onVersionChange}
         onPublish={onPublish}
         onRequestEditMode={onRequestEditMode}
+        onCanonicalEntitiesClick={
+          accessMode === "read" ? openCanonicalEntityBrowser : undefined
+        }
       />
 
       {accessMode === "edit" && (
@@ -248,10 +277,13 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         mode={mode}
         selectedNode={selectedNode}
         accessMode={accessMode}
+        boardViewMode={boardViewMode}
+        currentAnalysisCeId={currentAnalysisCeId}
         onBoardClick={onBoardClick}
         onNodeClick={onNodeClick}
         onNodePositionChange={onNodePositionChange}
         onSelectedNodeSave={onSelectedNodeSave}
+        onOpenCanonicalEntityAnalysis={onOpenCanonicalEntityAnalysis}
       />
 
       {canonicalEntitiesOpen && (
@@ -263,6 +295,18 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
           onChange={onCanonicalEntitiesChange}
           onDelete={onCanonicalEntityDelete}
           onUploadImage={onUploadImage}
+        />
+      )}
+
+      {canonicalEntityBrowserOpen && (
+        <CanonicalEntityBrowser
+          entities={canonicalEntities}
+          currentAnalysisCeId={currentAnalysisCeId}
+          onClose={closeCanonicalEntityBrowser}
+          onOpenAnalysisBoard={async (ceId) => {
+            closeCanonicalEntityBrowser();
+            await onOpenCanonicalEntityAnalysis(ceId);
+          }}
         />
       )}
 

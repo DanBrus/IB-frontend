@@ -1,6 +1,7 @@
 export const BOARD_NODE_TYPES = ["person_node", "location_node", "artifact_node", "note"] as const;
 export type BoardNodeType = (typeof BOARD_NODE_TYPES)[number];
 export type BoardAccessMode = "read" | "edit";
+export type BoardViewMode = "standard" | "analysis";
 
 function readNodeTypeValue(rawNodeType: unknown): string | null {
   if (typeof rawNodeType === "string") return rawNodeType;
@@ -44,6 +45,7 @@ export type BoardChunk = {
   description: string;
   chunk_priority: number;
   timecode: string;
+  board_source?: number | null;
 };
 
 export type BoardNode = {

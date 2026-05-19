@@ -1,16 +1,25 @@
 import React, { useState } from "react";
-import type { BoardAccessMode, BoardVersion } from "../boardTypes";
+import type { BoardAccessMode, BoardVersion, BoardViewMode } from "../boardTypes";
 import { formatBoardVersion, parseBoardVersion } from "../boardTypes";
 import { useIsMobile } from "../useIsMobile";
+
+const ANALYSIS_SELECT_VALUE = "__analysis_board__";
 
 interface InvestigationBoardHeaderProps {
   title: string;
   versions: BoardVersion[];
   currentVersion: number;
   accessMode: BoardAccessMode;
+  boardViewMode: BoardViewMode;
+  analysisBoardInfo: {
+    version: number;
+    name: string | null;
+    description: string | null;
+  } | null;
   onVersionChange: (version: number) => void;
   onPublish: () => void;
   onRequestEditMode: () => void;
+  onCanonicalEntitiesClick?: (() => void) | undefined;
 }
 
 export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> = ({
@@ -18,20 +27,32 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
   versions,
   currentVersion,
   accessMode,
+  boardViewMode,
+  analysisBoardInfo,
   onVersionChange,
   onPublish,
   onRequestEditMode,
+  onCanonicalEntitiesClick,
 }) => {
   const isMobile = useIsMobile();
   const [versionPickerOpen, setVersionPickerOpen] = useState(false);
+  const isAnalysisMode = boardViewMode === "analysis";
+  const analysisBoardLabel =
+    analysisBoardInfo
+      ? `${formatBoardVersion(analysisBoardInfo.version)} — ${
+          analysisBoardInfo.name?.trim() || "Аналитическая доска"
+        }`
+      : "0 — Аналитическая доска";
 
   const handleVersionSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    if (e.target.value === ANALYSIS_SELECT_VALUE) return;
     const parsedVersion = parseBoardVersion(e.target.value);
     if (parsedVersion === null) return;
     onVersionChange(parsedVersion);
   };
 
   const isEditMode = accessMode === "edit";
+  const canRequestEditMode = accessMode === "read" && !isAnalysisMode;
 
   const handlePublishClick = () => {
     const ok = window.confirm(
@@ -89,15 +110,22 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
                     fontSize: 13,
                     cursor: "pointer",
                     whiteSpace: "nowrap",
+                    maxWidth: "min(60vw, 320px)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
-                  Выбрать доску
+                  {isAnalysisMode ? analysisBoardLabel : "Выбрать доску"}
                 </button>
               ) : (
                 <>
                   <span style={{ opacity: 0.8 }}>Версия:</span>
                   <select
-                    value={formatBoardVersion(currentVersion)}
+                    value={
+                      isAnalysisMode
+                        ? ANALYSIS_SELECT_VALUE
+                        : formatBoardVersion(currentVersion)
+                    }
                     onChange={handleVersionSelectChange}
                     style={{
                       padding: "3px 6px",
@@ -108,6 +136,11 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
                       fontSize: 13,
                     }}
                   >
+                    {isAnalysisMode && (
+                      <option value={ANALYSIS_SELECT_VALUE} disabled>
+                        {analysisBoardLabel}
+                      </option>
+                    )}
                     {versions.map((version) => (
                       <option key={version.version} value={formatBoardVersion(version.version)}>
                         {formatBoardVersion(version.version)} — {version.name}
@@ -117,6 +150,24 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
                 </>
               )}
             </>
+          )}
+          {accessMode === "read" && onCanonicalEntitiesClick && (
+            <button
+              type="button"
+              onClick={onCanonicalEntitiesClick}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 4,
+                border: "1px solid #888",
+                backgroundColor: "#444",
+                color: "#f5f5f5",
+                fontSize: 13,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Сущности
+            </button>
           )}
           {isEditMode ? (
             <button
@@ -136,7 +187,7 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
               Сохранить
             </button>
           ) : (
-            !isMobile && (
+            !isMobile && canRequestEditMode && (
               <button
                 type="button"
                 onClick={onRequestEditMode}
@@ -187,8 +238,36 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
             }}
           >
             <div style={{ fontWeight: 700, fontSize: 16 }}>Доски для просмотра</div>
+            {isAnalysisMode && (
+              <div
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #222",
+                  backgroundColor: "#f3f3f3",
+                  color: "#111",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                }}
+              >
+                <span style={{ fontWeight: 600 }}>
+                  {analysisBoardInfo?.name?.trim() || "Аналитическая доска"}
+                </span>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>
+                  {formatBoardVersion(analysisBoardInfo?.version ?? 0)}
+                </span>
+                {analysisBoardInfo?.description?.trim() ? (
+                  <span style={{ fontSize: 12, opacity: 0.72 }}>
+                    {analysisBoardInfo.description.trim()}
+                  </span>
+                ) : null}
+              </div>
+            )}
             {versions.map((version) => {
-              const isCurrentVersion = version.version === currentVersion;
+              const isCurrentVersion = !isAnalysisMode && version.version === currentVersion;
 
               return (
                 <button
