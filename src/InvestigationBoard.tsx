@@ -1,6 +1,19 @@
 import React, { useState } from "react";
 import type { BoardMode } from "./components/BoardToolbar";
-import type { BoardNode, BoardEdge, BoardVersion, BoardNodeType, BoardAccessMode } from "./boardTypes";
+import type {
+  BoardAccessMode,
+  BoardEdge,
+  BoardNode,
+  BoardVersion,
+  CanonicalEntity,
+} from "./boardTypes";
+import { formatBoardVersion, parseBoardVersion } from "./boardTypes";
+import type { EditableBoardDescriptionSheet } from "./boardDescription";
+import type {
+  CanonicalEntitiesSyncResult,
+  CanonicalEntityDeleteResult,
+} from "./boardDataSource";
+import { CanonicalEntityManager } from "./components/CanonicalEntityManager";
 import { InvestigationBoardHeader } from "./components/InvestigationBoardHeader";
 import { InvestigationBoardToolbar } from "./components/InvestigationBoardToolbar";
 import { InvestigationBoardWorkspace } from "./components/InvestigationBoardWorkspace";
@@ -9,21 +22,22 @@ interface InvestigationBoardProps {
   title?: string;
   nodes: BoardNode[];
   edges: BoardEdge[];
+  canonicalEntities: CanonicalEntity[];
   mode: BoardMode;
   selectedNode: BoardNode | null;
 
   versions: BoardVersion[];
-  currentVersion: string;
+  currentVersion: number;
   currentVersionIsPublished: boolean;
   accessMode: BoardAccessMode;
-  onVersionChange: (version: string) => void;
+  onVersionChange: (version: number) => void;
   onCreateVersion: (payload: {
-    version: string;
+    version: number;
     name: string;
     description: string;
     is_published?: boolean | null;
   }) => Promise<void>;
-  onDeleteVersion: (version: string) => Promise<void>;
+  onDeleteVersion: (version: number) => Promise<void>;
   onRequestEditMode: () => void;
 
   onPublish: () => void;
@@ -41,9 +55,19 @@ interface InvestigationBoardProps {
 
   onSelectedNodeSave: (
     id: number,
-    patch: { name: string; description: string; node_type: BoardNodeType; picture_path?: string | null }
+    patch: {
+      ce_id: string;
+      descriptionSheets: EditableBoardDescriptionSheet[];
+    }
   ) => Promise<void>;
 
+  onCanonicalEntitiesChange: (
+    entities: CanonicalEntity[]
+  ) => Promise<CanonicalEntitiesSyncResult>;
+  onCanonicalEntityDelete: (
+    entityId: string
+  ) => Promise<CanonicalEntityDeleteResult>;
+  onCanonicalEntitiesManagerClose: (shouldRefreshNodes: boolean) => void | Promise<void>;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
@@ -51,6 +75,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   title = "Доска расследований",
   nodes,
   edges,
+  canonicalEntities,
   mode,
   selectedNode,
   versions,
@@ -72,6 +97,9 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   onNodeClick,
   onNodePositionChange,
   onSelectedNodeSave,
+  onCanonicalEntitiesChange,
+  onCanonicalEntityDelete,
+  onCanonicalEntitiesManagerClose,
   onUploadImage,
 }) => {
   const [newVersionOpen, setNewVersionOpen] = useState(false);
@@ -84,6 +112,8 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   const [deleteVersionId, setDeleteVersionId] = useState<string>("");
   const [deleteVersionError, setDeleteVersionError] = useState<string | null>(null);
   const [deleteVersionSaving, setDeleteVersionSaving] = useState(false);
+  const [canonicalEntitiesOpen, setCanonicalEntitiesOpen] = useState(false);
+  const [canonicalEntityCreateRequestToken, setCanonicalEntityCreateRequestToken] = useState(0);
 
   const openNewVersionDialog = () => {
     if (accessMode !== "edit") return;
@@ -102,26 +132,22 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   const handleCreateVersionSubmit = async () => {
     if (accessMode !== "edit") return;
 
-    const version = newVersion.trim();
+    const parsedVersion = parseBoardVersion(newVersion);
     const name = newVersionName.trim();
     const description = newVersionDescription.trim();
 
-    if (!version || !name || !description) {
-      setNewVersionError("Все поля обязательны.");
-      return;
-    }
-    if (/\s/.test(version)) {
-      setNewVersionError("Поле version не должно содержать пробелов.");
+    if (parsedVersion === null || !name || !description) {
+      setNewVersionError("Заполните version числом, name и description.");
       return;
     }
 
     setNewVersionError(null);
     setNewVersionSaving(true);
     try {
-      await onCreateVersion({ version, name, description, is_published: false });
+      await onCreateVersion({ version: parsedVersion, name, description, is_published: false });
       setNewVersionOpen(false);
-    } catch (e: any) {
-      setNewVersionError(e?.message ? String(e.message) : "Не удалось создать версию.");
+    } catch (e: unknown) {
+      setNewVersionError(e instanceof Error ? e.message : "Не удалось создать версию.");
     } finally {
       setNewVersionSaving(false);
     }
@@ -130,7 +156,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   const openDeleteVersionDialog = () => {
     if (accessMode !== "edit") return;
     setDeleteVersionError(null);
-    setDeleteVersionId(currentVersion || versions[0]?.version || "");
+    setDeleteVersionId(formatBoardVersion(currentVersion ?? versions[0]?.version ?? 0));
     setDeleteVersionOpen(true);
   };
 
@@ -142,26 +168,44 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   const handleDeleteVersionSubmit = async () => {
     if (accessMode !== "edit") return;
 
-    const version = deleteVersionId.trim();
-    if (!version) {
+    const parsedVersion = parseBoardVersion(deleteVersionId);
+    if (parsedVersion === null) {
       setDeleteVersionError("Выберите версию для удаления.");
       return;
     }
-    const confirm = window.confirm(
-      `Вы уверены, что хотите удалить версию "${version}"?\nДействие необратимо.`
+
+    const confirmed = window.confirm(
+      `Вы уверены, что хотите удалить версию "${formatBoardVersion(parsedVersion)}"?\nДействие необратимо.`
     );
-    if (!confirm) return;
+    if (!confirmed) return;
 
     setDeleteVersionError(null);
     setDeleteVersionSaving(true);
     try {
-      await onDeleteVersion(version);
+      await onDeleteVersion(parsedVersion);
       setDeleteVersionOpen(false);
-    } catch (e: any) {
-      setDeleteVersionError(e?.message ? String(e.message) : "Не удалось удалить версию.");
+    } catch (e: unknown) {
+      setDeleteVersionError(e instanceof Error ? e.message : "Не удалось удалить версию.");
     } finally {
       setDeleteVersionSaving(false);
     }
+  };
+
+  const openCanonicalEntitiesDialog = () => {
+    if (accessMode !== "edit") return;
+    setCanonicalEntitiesOpen(true);
+  };
+
+  const closeCanonicalEntitiesDialog = (options?: { shouldRefreshNodes: boolean }) => {
+    setCanonicalEntitiesOpen(false);
+    setCanonicalEntityCreateRequestToken(0);
+    void onCanonicalEntitiesManagerClose(options?.shouldRefreshNodes ?? false);
+  };
+
+  const handleQuickCreateCanonicalEntity = () => {
+    if (accessMode !== "edit") return;
+    setCanonicalEntitiesOpen(true);
+    setCanonicalEntityCreateRequestToken((prev) => prev + 1);
   };
 
   return (
@@ -189,6 +233,8 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
           onCurrentVersionPublishedChange={onCurrentVersionPublishedChange}
           onNewVersionClick={openNewVersionDialog}
           onDeleteVersionClick={openDeleteVersionDialog}
+          onCanonicalEntitiesClick={openCanonicalEntitiesDialog}
+          onCreateCanonicalEntityClick={handleQuickCreateCanonicalEntity}
           canDeleteVersion={versions.length > 0}
         />
       )}
@@ -196,6 +242,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
       <InvestigationBoardWorkspace
         nodes={nodes}
         edges={edges}
+        canonicalEntities={canonicalEntities}
         mode={mode}
         selectedNode={selectedNode}
         accessMode={accessMode}
@@ -203,8 +250,18 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         onNodeClick={onNodeClick}
         onNodePositionChange={onNodePositionChange}
         onSelectedNodeSave={onSelectedNodeSave}
-        onUploadImage={onUploadImage}
       />
+
+      {canonicalEntitiesOpen && (
+        <CanonicalEntityManager
+          entities={canonicalEntities}
+          createRequestToken={canonicalEntityCreateRequestToken}
+          onClose={closeCanonicalEntitiesDialog}
+          onChange={onCanonicalEntitiesChange}
+          onDelete={onCanonicalEntityDelete}
+          onUploadImage={onUploadImage}
+        />
+      )}
 
       {newVersionOpen && (
         <div
@@ -245,6 +302,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
                 value={newVersion}
                 disabled={newVersionSaving}
                 onChange={(e) => setNewVersion(e.target.value)}
+                placeholder="1.2"
                 style={{
                   width: "100%",
                   marginTop: 4,
@@ -385,9 +443,9 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
                 <option value="" disabled>
                   Выберите версию
                 </option>
-                {versions.map((v) => (
-                  <option key={v.version} value={v.version}>
-                    {v.version} — {v.name}
+                {versions.map((version) => (
+                  <option key={version.version} value={formatBoardVersion(version.version)}>
+                    {formatBoardVersion(version.version)} — {version.name}
                   </option>
                 ))}
               </select>

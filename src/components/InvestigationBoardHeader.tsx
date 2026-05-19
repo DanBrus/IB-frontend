@@ -1,13 +1,14 @@
 import React, { useState } from "react";
-import type { BoardVersion, BoardAccessMode } from "../boardTypes";
+import type { BoardAccessMode, BoardVersion } from "../boardTypes";
+import { formatBoardVersion, parseBoardVersion } from "../boardTypes";
 import { useIsMobile } from "../useIsMobile";
 
 interface InvestigationBoardHeaderProps {
   title: string;
   versions: BoardVersion[];
-  currentVersion: string;
+  currentVersion: number;
   accessMode: BoardAccessMode;
-  onVersionChange: (version: string) => void;
+  onVersionChange: (version: number) => void;
   onPublish: () => void;
   onRequestEditMode: () => void;
 }
@@ -25,7 +26,9 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
   const [versionPickerOpen, setVersionPickerOpen] = useState(false);
 
   const handleVersionSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    onVersionChange(e.target.value);
+    const parsedVersion = parseBoardVersion(e.target.value);
+    if (parsedVersion === null) return;
+    onVersionChange(parsedVersion);
   };
 
   const isEditMode = accessMode === "edit";
@@ -46,7 +49,7 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
     setVersionPickerOpen(false);
   };
 
-  const handleVersionPick = (version: string) => {
+  const handleVersionPick = (version: number) => {
     onVersionChange(version);
     closeVersionPicker();
   };
@@ -94,7 +97,7 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
                 <>
                   <span style={{ opacity: 0.8 }}>Версия:</span>
                   <select
-                    value={currentVersion}
+                    value={formatBoardVersion(currentVersion)}
                     onChange={handleVersionSelectChange}
                     style={{
                       padding: "3px 6px",
@@ -105,9 +108,9 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
                       fontSize: 13,
                     }}
                   >
-                    {versions.map((v) => (
-                      <option key={v.version} value={v.version}>
-                        {v.version} — {v.name}
+                    {versions.map((version) => (
+                      <option key={version.version} value={formatBoardVersion(version.version)}>
+                        {formatBoardVersion(version.version)} — {version.name}
                       </option>
                     ))}
                   </select>
@@ -207,7 +210,7 @@ export const InvestigationBoardHeader: React.FC<InvestigationBoardHeaderProps> =
                   }}
                 >
                   <span style={{ fontWeight: 600 }}>{version.name}</span>
-                  <span style={{ fontSize: 12, opacity: 0.7 }}>{version.version}</span>
+                  <span style={{ fontSize: 12, opacity: 0.7 }}>{formatBoardVersion(version.version)}</span>
                 </button>
               );
             })}

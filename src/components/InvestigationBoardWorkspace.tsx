@@ -1,6 +1,13 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BoardMode } from "./BoardToolbar";
-import type { BoardNode, BoardEdge, BoardNodeType, BoardAccessMode } from "../boardTypes";
+import type { EditableBoardDescriptionSheet } from "../boardDescription";
+import { buildNodeDescriptionSheets, getConnectedNodes } from "../boardDescription";
+import type {
+  BoardAccessMode,
+  BoardEdge,
+  BoardNode,
+  CanonicalEntity,
+} from "../boardTypes";
 import { CARD_HEIGHT, CARD_WIDTH } from "../cardLayout";
 import { NodeCard } from "./NodeCard";
 import { EdgeLine } from "./EdgeLine";
@@ -23,6 +30,15 @@ type PendingScroll = {
   top: number;
 } | null;
 
+type BoardPanState = {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startScrollLeft: number;
+  startScrollTop: number;
+  hasMoved: boolean;
+} | null;
+
 const CANVAS_PADDING = 120;
 const DESKTOP_DEFAULT_SCALE = 1;
 const MOBILE_DEFAULT_SCALE = 1 / 1.75;
@@ -35,6 +51,7 @@ const DRAG_ACTIVATION_DISTANCE = 8;
 interface InvestigationBoardWorkspaceProps {
   nodes: BoardNode[];
   edges: BoardEdge[];
+  canonicalEntities: CanonicalEntity[];
   mode: BoardMode;
   selectedNode: BoardNode | null;
   accessMode: BoardAccessMode;
@@ -43,14 +60,17 @@ interface InvestigationBoardWorkspaceProps {
   onNodePositionChange?: (id: number, x: number, y: number) => void;
   onSelectedNodeSave: (
     id: number,
-    patch: { name: string; description: string; node_type: BoardNodeType; picture_path?: string | null }
+    patch: {
+      ce_id: string;
+      descriptionSheets: EditableBoardDescriptionSheet[];
+    }
   ) => Promise<void>;
-  onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
 export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspaceProps> = ({
   nodes,
   edges,
+  canonicalEntities,
   mode,
   selectedNode,
   accessMode,
@@ -58,19 +78,20 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   onNodeClick,
   onNodePositionChange,
   onSelectedNodeSave,
-  onUploadImage,
 }) => {
   const isMobile = useIsMobile();
   const minScale = isMobile ? MOBILE_MIN_SCALE : DESKTOP_MIN_SCALE;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<DragState>(null);
+  const [boardPan, setBoardPan] = useState<BoardPanState>(null);
   const [readPanelNodeId, setReadPanelNodeId] = useState<number | null>(null);
   const [scale, setScale] = useState(() => (isMobile ? MOBILE_DEFAULT_SCALE : DESKTOP_DEFAULT_SCALE));
   const pendingScrollRef = useRef<PendingScroll>(null);
+  const suppressBoardClickRef = useRef(false);
 
   const nodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
-    nodes.forEach((n) => map.set(n.node_id, n));
+    nodes.forEach((node) => map.set(node.node_id, node));
     return map;
   }, [nodes]);
 
@@ -106,6 +127,18 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
 
   const readPanelNode =
     accessMode === "read" && readPanelNodeId !== null ? nodesById.get(readPanelNodeId) ?? null : null;
+  const readPanelSheets = useMemo(
+    () => buildNodeDescriptionSheets(readPanelNode, nodes, edges),
+    [readPanelNode, nodes, edges]
+  );
+  const selectedNodeSheets = useMemo(
+    () => buildNodeDescriptionSheets(selectedNode, nodes, edges),
+    [selectedNode, nodes, edges]
+  );
+  const connectedNodes = useMemo(
+    () => (selectedNode ? getConnectedNodes(selectedNode.node_id, nodes, edges) : []),
+    [selectedNode, nodes, edges]
+  );
 
   useEffect(() => {
     const nextDefaultScale = isMobile ? MOBILE_DEFAULT_SCALE : DESKTOP_DEFAULT_SCALE;
@@ -157,16 +190,19 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
     };
   };
 
-  const getVisibleWorldRect = (nextScale: number, nextScrollLeft: number, nextScrollTop: number, viewport: HTMLDivElement) => {
-    return {
-      left: nextScrollLeft / nextScale - boardBounds.canvasLeft,
-      top: nextScrollTop / nextScale - boardBounds.canvasTop,
-      right: (nextScrollLeft + viewport.clientWidth) / nextScale - boardBounds.canvasLeft,
-      bottom: (nextScrollTop + viewport.clientHeight) / nextScale - boardBounds.canvasTop,
-    };
-  };
+  const getVisibleWorldRect = (nextScale: number, nextScrollLeft: number, nextScrollTop: number, viewport: HTMLDivElement) => ({
+    left: nextScrollLeft / nextScale - boardBounds.canvasLeft,
+    top: nextScrollTop / nextScale - boardBounds.canvasTop,
+    right: (nextScrollLeft + viewport.clientWidth) / nextScale - boardBounds.canvasLeft,
+    bottom: (nextScrollTop + viewport.clientHeight) / nextScale - boardBounds.canvasTop,
+  });
 
-  const hasFullyVisibleNode = (nextScale: number, nextScrollLeft: number, nextScrollTop: number, viewport: HTMLDivElement) => {
+  const hasFullyVisibleNode = (
+    nextScale: number,
+    nextScrollLeft: number,
+    nextScrollTop: number,
+    viewport: HTMLDivElement
+  ) => {
     const visibleRect = getVisibleWorldRect(nextScale, nextScrollLeft, nextScrollTop, viewport);
 
     return nodes.some(
@@ -181,17 +217,19 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   const getClosestNode = (worldX: number, worldY: number) => {
     if (nodes.length === 0) return null;
 
-    return nodes.reduce((closest, node) => {
-      const centerX = node.pos_x + CARD_WIDTH / 2;
-      const centerY = node.pos_y + CARD_HEIGHT / 2;
-      const distance = (centerX - worldX) ** 2 + (centerY - worldY) ** 2;
+    return (
+      nodes.reduce((closest, node) => {
+        const centerX = node.pos_x + CARD_WIDTH / 2;
+        const centerY = node.pos_y + CARD_HEIGHT / 2;
+        const distance = (centerX - worldX) ** 2 + (centerY - worldY) ** 2;
 
-      if (!closest || distance < closest.distance) {
-        return { node, distance };
-      }
+        if (!closest || distance < closest.distance) {
+          return { node, distance };
+        }
 
-      return closest;
-    }, null as { node: BoardNode; distance: number } | null)?.node ?? null;
+        return closest;
+      }, null as { node: BoardNode; distance: number } | null)?.node ?? null
+    );
   };
 
   const getNodeCenteredScroll = (node: BoardNode, nextScale: number, viewport: HTMLDivElement) => {
@@ -205,12 +243,76 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   };
 
   const handleBoardClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (suppressBoardClickRef.current) {
+      suppressBoardClickRef.current = false;
+      return;
+    }
+
     if (accessMode === "read") return;
     const pointer = getPointerPosition(e.clientX, e.clientY);
     if (!pointer) return;
 
     onBoardClick(pointer.worldX, pointer.worldY);
   };
+
+  useEffect(() => {
+    if (!boardPan) return;
+
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== boardPan.pointerId) return;
+
+      const movedDistance = Math.hypot(
+        event.clientX - boardPan.startClientX,
+        event.clientY - boardPan.startClientY
+      );
+      const hasMovedEnough =
+        boardPan.hasMoved || movedDistance >= DRAG_ACTIVATION_DISTANCE;
+
+      if (!hasMovedEnough) return;
+
+      event.preventDefault();
+
+      if (!boardPan.hasMoved) {
+        setBoardPan((currentPan) =>
+          currentPan && currentPan.pointerId === event.pointerId
+            ? { ...currentPan, hasMoved: true }
+            : currentPan
+        );
+      }
+
+      viewport.scrollTo({
+        left: boardPan.startScrollLeft - (event.clientX - boardPan.startClientX),
+        top: boardPan.startScrollTop - (event.clientY - boardPan.startClientY),
+      });
+    };
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      if (event.pointerId !== boardPan.pointerId) return;
+
+      suppressBoardClickRef.current =
+        Math.hypot(
+          event.clientX - boardPan.startClientX,
+          event.clientY - boardPan.startClientY
+        ) >= DRAG_ACTIVATION_DISTANCE;
+      setBoardPan(null);
+    };
+
+    document.body.style.userSelect = "none";
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+
+    return () => {
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }, [boardPan]);
 
   useEffect(() => {
     if (!drag || !onNodePositionChange) return;
@@ -242,8 +344,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
       if (event.pointerId !== drag.pointerId) return;
 
       const movedDistance = Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY);
-      const shouldOpenReadPanel =
-        accessMode === "read" && isMobile && movedDistance < DRAG_ACTIVATION_DISTANCE;
+      const shouldOpenReadPanel = accessMode === "read" && isMobile && movedDistance < DRAG_ACTIVATION_DISTANCE;
       const nodeId = drag.nodeId;
 
       setDrag(null);
@@ -262,7 +363,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
       window.removeEventListener("pointerup", handlePointerEnd);
       window.removeEventListener("pointercancel", handlePointerEnd);
     };
-  }, [accessMode, drag, getPointerPosition, isMobile, onNodePositionChange]);
+  }, [accessMode, drag, isMobile, onNodePositionChange, nodes]);
 
   const handleNodePointerDown = (e: React.PointerEvent<HTMLDivElement>, node: BoardNode) => {
     if (!e.isPrimary) return;
@@ -273,7 +374,6 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
 
     const actualNode = nodesById.get(node.node_id) ?? node;
     const pointer = getPointerPosition(e.clientX, e.clientY);
-
     if (!pointer) return;
 
     if (mode !== "idle") {
@@ -299,12 +399,31 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
     setReadPanelNodeId(node.node_id);
   };
 
+  const handleViewportPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (isMobile) return;
+    if (!event.isPrimary) return;
+    if (event.pointerType !== "mouse" || event.button !== 0) return;
+
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    suppressBoardClickRef.current = false;
+    setBoardPan({
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startScrollLeft: viewport.scrollLeft,
+      startScrollTop: viewport.scrollTop,
+      hasMoved: false,
+    });
+  };
+
   const handleReadPanelClose = () => {
     setReadPanelNodeId(null);
   };
 
   const handleViewportWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (!e.shiftKey) return;
+    if (isMobile || !e.altKey) return;
 
     const viewport = viewportRef.current;
     const pointer = getPointerPosition(e.clientX, e.clientY);
@@ -350,9 +469,17 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
           position: "relative",
           flexGrow: 1,
           overflow: "auto",
-          cursor: drag != null ? "grabbing" : accessMode === "edit" && mode === "add-node" ? "crosshair" : "default",
+          cursor:
+            drag != null || boardPan != null
+              ? "grabbing"
+              : accessMode === "edit" && mode === "add-node"
+                ? "crosshair"
+                : !isMobile
+                  ? "grab"
+                  : "default",
         }}
         onWheel={handleViewportWheel}
+        onPointerDown={handleViewportPointerDown}
         onClick={handleBoardClick}
       >
         <div
@@ -385,7 +512,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
                 }}
                 onPointerDown={handleNodePointerDown}
                 onDoubleClick={handleNodeDoubleClick}
-                showInlineDescription={accessMode === "edit"}
+                showInlineDescription={false}
               />
             ))}
 
@@ -398,6 +525,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
                 const from = nodesById.get(edge.node1);
                 const to = nodesById.get(edge.node2);
                 if (!from || !to) return null;
+
                 return (
                   <EdgeLine
                     key={edge.edge_id}
@@ -413,11 +541,22 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
       </div>
 
       {accessMode === "edit" && mode === "edit-node" && (
-        <NodeInspector node={selectedNode} onSaveNode={onSelectedNodeSave} onUploadImage={onUploadImage} />
+        <NodeInspector
+          node={selectedNode}
+          canonicalEntities={canonicalEntities}
+          descriptionSheets={selectedNodeSheets}
+          connectedNodes={connectedNodes}
+          onSaveNode={onSelectedNodeSave}
+        />
       )}
 
       {accessMode === "read" && readPanelNodeId !== null && (
-        <NodeReadPanel node={readPanelNode} onClose={handleReadPanelClose} mobile={isMobile} />
+        <NodeReadPanel
+          node={readPanelNode}
+          descriptionSheets={readPanelSheets}
+          onClose={handleReadPanelClose}
+          mobile={isMobile}
+        />
       )}
     </div>
   );

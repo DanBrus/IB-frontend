@@ -1,138 +1,301 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { InvestigationBoard } from "./InvestigationBoard";
-import type { BoardNode, BoardEdge, BoardVersion, BoardNodeType, BoardAccessMode } from "./boardTypes";
+import type { EditableBoardDescriptionSheet } from "./boardDescription";
+import { buildDescriptionAssignments } from "./boardDescription";
+import {
+  getCanonicalEntityPicturePath,
+  sortCanonicalEntities,
+} from "./canonicalEntities";
+import type {
+  BoardAccessMode,
+  BoardEdge,
+  FreeIds,
+  BoardNode,
+  BoardVersion,
+  CanonicalEntity,
+} from "./boardTypes";
 import { BOARD_NODE_TYPES } from "./boardTypes";
 import type { BoardMode } from "./components/BoardToolbar";
+import type {
+  CanonicalEntitiesSyncResult,
+  CanonicalEntityDeleteResult,
+} from "./boardDataSource";
 import { boardDataSource } from "./boardDataSource";
 import { fileDataSource } from "./fileDataSource";
+
+const BOARD_ID = "demo-board";
 
 interface InvestigationBoardScreenProps {
   title?: string;
   initialNodes: BoardNode[];
   initialEdges: BoardEdge[];
+  initialCanonicalEntities: CanonicalEntity[];
   versions: BoardVersion[];
-  currentVersion: string;
+  currentVersion: number;
   accessMode: BoardAccessMode;
-  onChangeVersion: (version: string) => void;
+  onChangeVersion: (version: number) => void;
   onCreateVersion: (payload: {
-    version: string;
+    version: number;
     name: string;
     description: string;
     is_published?: boolean | null;
   }) => Promise<void>;
-  onDeleteVersion: (version: string) => Promise<void>;
-  onCurrentVersionPublicationChange: (version: string, isPublished: boolean) => void;
+  onDeleteVersion: (version: number) => Promise<void>;
+  onPersistBoard: (payload: {
+    version: number;
+    nodes: BoardNode[];
+    edges: BoardEdge[];
+    is_published: boolean;
+  }) => Promise<void>;
+  onCanonicalEntitiesChange: (
+    entities: CanonicalEntity[]
+  ) => Promise<CanonicalEntitiesSyncResult>;
+  onCanonicalEntityDelete: (
+    entityId: string
+  ) => Promise<CanonicalEntityDeleteResult>;
   onRequestEditMode: () => void;
+}
+
+function mergeRefreshedNodes(currentNodes: BoardNode[], refreshedNodes: BoardNode[]): BoardNode[] {
+  const refreshedNodesById = new Map(
+    refreshedNodes.map((node) => [node.node_id, node] as const)
+  );
+
+  const mergedNodes = currentNodes.map((node) => {
+    const refreshedNode = refreshedNodesById.get(node.node_id);
+    if (!refreshedNode) return node;
+
+    refreshedNodesById.delete(node.node_id);
+    return {
+      ...node,
+      ce_id: refreshedNode.ce_id,
+      name: refreshedNode.name,
+      node_type: refreshedNode.node_type,
+      picture_path: refreshedNode.picture_path,
+    };
+  });
+
+  return [...mergedNodes, ...refreshedNodesById.values()].sort(
+    (left, right) => left.node_id - right.node_id
+  );
 }
 
 export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> = ({
   title = "Доска расследований",
   initialNodes,
   initialEdges,
+  initialCanonicalEntities,
   versions,
   currentVersion,
   accessMode,
   onChangeVersion,
   onCreateVersion,
   onDeleteVersion,
-  onCurrentVersionPublicationChange,
+  onPersistBoard,
+  onCanonicalEntitiesChange,
+  onCanonicalEntityDelete,
   onRequestEditMode,
 }) => {
   const [nodes, setNodes] = useState<BoardNode[]>(initialNodes);
   const [edges, setEdges] = useState<BoardEdge[]>(initialEdges);
+  const [canonicalEntities, setCanonicalEntities] = useState<CanonicalEntity[]>(() =>
+    sortCanonicalEntities(initialCanonicalEntities)
+  );
+  const [draftNode, setDraftNode] = useState<BoardNode | null>(null);
 
   const [mode, setMode] = useState<BoardMode>("idle");
   const [edgeActionFirstNodeId, setEdgeActionFirstNodeId] = useState<number | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
 
   const [isPublishing, setIsPublishing] = useState(false);
-  const initialIsPublished = versions.find((version) => version.version === currentVersion)?.is_published ?? false;
+  const initialIsPublished =
+    versions.find((version) => version.version === currentVersion)?.is_published ?? false;
   const [isPublished, setIsPublished] = useState(Boolean(initialIsPublished));
+  const [freeIdsLoading, setFreeIdsLoading] = useState(false);
+  const [freeIdsError, setFreeIdsError] = useState<string | null>(null);
+  const freeIdsRef = useRef<FreeIds | null>(null);
 
   const nodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
-    nodes.forEach((n) => map.set(n.node_id, n));
+    nodes.forEach((node) => map.set(node.node_id, node));
     return map;
   }, [nodes]);
+
+  const canonicalEntitiesById = useMemo(() => {
+    const map = new Map<string, CanonicalEntity>();
+    canonicalEntities.forEach((entity) => map.set(entity.en_id, entity));
+    return map;
+  }, [canonicalEntities]);
 
   useEffect(() => {
     setIsPublished(Boolean(initialIsPublished));
   }, [currentVersion, initialIsPublished]);
 
-  const selectedNode = selectedNodeId !== null ? nodesById.get(selectedNodeId) ?? null : null;
+  useEffect(() => {
+    setNodes(initialNodes);
+    setEdges(initialEdges);
+    setMode("idle");
+    setEdgeActionFirstNodeId(null);
+    setSelectedNodeId(null);
+    setDraftNode(null);
+  }, [currentVersion, initialEdges, initialNodes]);
+
+  useEffect(() => {
+    setCanonicalEntities(sortCanonicalEntities(initialCanonicalEntities));
+  }, [initialCanonicalEntities]);
+
   const isEditMode = accessMode === "edit";
+
+  useEffect(() => {
+    if (!isEditMode) {
+      freeIdsRef.current = null;
+      setFreeIdsLoading(false);
+      setFreeIdsError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setFreeIdsLoading(true);
+    setFreeIdsError(null);
+
+    void boardDataSource
+      .getFreeIds(BOARD_ID)
+      .then((nextFreeIds) => {
+        if (cancelled) return;
+        freeIdsRef.current = { ...nextFreeIds };
+        setFreeIdsLoading(false);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        freeIdsRef.current = null;
+        setFreeIdsLoading(false);
+        setFreeIdsError(
+          error instanceof Error
+            ? error.message
+            : "Не удалось получить свободные id с сервера."
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentVersion, initialEdges, initialNodes, isEditMode]);
+
+  const selectedNode =
+    draftNode ?? (selectedNodeId !== null ? nodesById.get(selectedNodeId) ?? null : null);
 
   const resetEdgeAction = () => setEdgeActionFirstNodeId(null);
 
+  const allocateNextFreeId = (kind: keyof FreeIds): number => {
+    const freeIds = freeIdsRef.current;
+    if (!freeIds) {
+      throw new Error(
+        freeIdsLoading
+          ? "Свободные id ещё загружаются. Попробуйте снова через секунду."
+          : freeIdsError
+            ? `Не удалось получить свободные id: ${freeIdsError}`
+            : "Свободные id недоступны. Попробуйте обновить страницу."
+      );
+    }
+
+    const nextId = freeIds[kind];
+    freeIdsRef.current = {
+      ...freeIds,
+      [kind]: nextId + 1,
+    };
+    return nextId;
+  };
+
+  const ensureFreeIdsReady = (): boolean => {
+    if (freeIdsRef.current) return true;
+
+    const message = freeIdsLoading
+      ? "Свободные id ещё загружаются. Попробуйте снова через секунду."
+      : freeIdsError
+        ? `Не удалось получить свободные id: ${freeIdsError}`
+        : "Свободные id недоступны. Попробуйте обновить страницу.";
+
+    window.alert(message);
+    return false;
+  };
+
+  const clearNodeSelection = () => {
+    setSelectedNodeId(null);
+    setDraftNode(null);
+  };
+
   const handleNodeAddClick = () => {
     if (!isEditMode) return;
+    if (!ensureFreeIdsReady()) return;
     setMode((prev) => (prev === "add-node" ? "idle" : "add-node"));
     resetEdgeAction();
-    setSelectedNodeId(null);
+    clearNodeSelection();
   };
 
   const handleNodeDeleteClick = () => {
     if (!isEditMode) return;
     setMode((prev) => (prev === "delete-node" ? "idle" : "delete-node"));
     resetEdgeAction();
-    setSelectedNodeId(null);
+    clearNodeSelection();
   };
 
   const handleNodeEditClick = () => {
     if (!isEditMode) return;
     setMode((prev) => (prev === "edit-node" ? "idle" : "edit-node"));
     resetEdgeAction();
+    setDraftNode(null);
     if (mode === "edit-node") setSelectedNodeId(null);
   };
 
   const handleEdgeAddClick = () => {
     if (!isEditMode) return;
+    if (!ensureFreeIdsReady()) return;
     setMode((prev) => (prev === "add-edge" ? "idle" : "add-edge"));
     resetEdgeAction();
-    setSelectedNodeId(null);
+    clearNodeSelection();
   };
 
   const handleEdgeDeleteClick = () => {
     if (!isEditMode) return;
     setMode((prev) => (prev === "delete-edge" ? "idle" : "delete-edge"));
     resetEdgeAction();
-    setSelectedNodeId(null);
+    clearNodeSelection();
   };
 
   const handleBoardClick = (x: number, y: number) => {
-    if (!isEditMode) return;
-    if (mode !== "add-node") return;
+    if (!isEditMode || mode !== "add-node") return;
 
-    const maxId = nodes.length > 0 ? nodes.reduce((m, n) => (n.node_id > m ? n.node_id : m), nodes[0].node_id) : 0;
-    const newId = maxId + 1;
-
-    setNodes((prev) => [
-      ...prev,
-      {
-        node_id: newId,
-        name: `Node ${newId}`,
-        pos_x: x,
-        pos_y: y,
-        node_type: BOARD_NODE_TYPES[0],
-        description: "",
-        picture_path: null,
-      },
-    ]);
-
-    setMode("idle");
+    setDraftNode({
+      node_id: allocateNextFreeId("node_id"),
+      ce_id: "",
+      name: "",
+      pos_x: x,
+      pos_y: y,
+      node_type: BOARD_NODE_TYPES[0],
+      description: [],
+      picture_path: null,
+    });
+    setSelectedNodeId(null);
+    setMode("edit-node");
   };
 
   const handleNodeClick = (node: BoardNode) => {
     if (!isEditMode) return;
 
     if (mode === "delete-node") {
-      setNodes((prev) => prev.filter((n) => n.node_id !== node.node_id));
-      setEdges((prev) => prev.filter((e) => e.node1 !== node.node_id && e.node2 !== node.node_id));
+      setNodes((prev) => prev.filter((item) => item.node_id !== node.node_id));
+      setEdges((prev) =>
+        prev.filter(
+          (edge) => edge.node1 !== node.node_id && edge.node2 !== node.node_id
+        )
+      );
       setMode("idle");
+      if (selectedNodeId === node.node_id) setSelectedNodeId(null);
       return;
     }
 
     if (mode === "edit-node") {
+      setDraftNode(null);
       setSelectedNodeId(node.node_id);
       return;
     }
@@ -150,13 +313,21 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
         if (fromId === toId) return;
 
         const exists = edges.some(
-          (e) => (e.node1 === fromId && e.node2 === toId) || (e.node1 === toId && e.node2 === fromId)
+          (edge) =>
+            (edge.node1 === fromId && edge.node2 === toId) ||
+            (edge.node1 === toId && edge.node2 === fromId)
         );
         if (exists) return;
 
-        const maxEdgeId = edges.length > 0 ? edges.reduce((m, e) => (e.edge_id > m ? e.edge_id : m), edges[0].edge_id) : 0;
-
-        setEdges((prev) => [...prev, { edge_id: maxEdgeId + 1, node1: fromId, node2: toId }]);
+        setEdges((prev) => [
+          ...prev,
+          {
+            edge_id: allocateNextFreeId("edge_id"),
+            node1: fromId,
+            node2: toId,
+            description: [],
+          },
+        ]);
       }
       return;
     }
@@ -165,73 +336,170 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       if (edgeActionFirstNodeId === null) {
         setEdgeActionFirstNodeId(node.node_id);
       } else {
-        const n1 = edgeActionFirstNodeId;
-        const n2 = node.node_id;
+        const node1 = edgeActionFirstNodeId;
+        const node2 = node.node_id;
 
         resetEdgeAction();
         setMode("idle");
 
         const edgeToDelete = edges.find(
-          (e) => (e.node1 === n1 && e.node2 === n2) || (e.node1 === n2 && e.node2 === n1)
+          (edge) =>
+            (edge.node1 === node1 && edge.node2 === node2) ||
+            (edge.node1 === node2 && edge.node2 === node1)
         );
-        if (edgeToDelete) setEdges((prev) => prev.filter((e) => e.edge_id !== edgeToDelete.edge_id));
+        if (edgeToDelete) {
+          setEdges((prev) =>
+            prev.filter((edge) => edge.edge_id !== edgeToDelete.edge_id)
+          );
+        }
       }
-      return;
     }
   };
 
   const handleNodePositionChange = (id: number, pos_x: number, pos_y: number) => {
-    setNodes((prev) => prev.map((n) => (n.node_id === id ? { ...n, pos_x, pos_y } : n)));
+    setNodes((prev) =>
+      prev.map((node) => (node.node_id === id ? { ...node, pos_x, pos_y } : node))
+    );
   };
 
-  // PATCH узла (включая picture_path) — async, чтобы инспектор мог await
   const handleSelectedNodeSave = async (
     id: number,
-    patch: { name: string; description: string; node_type: BoardNodeType; picture_path?: string | null }
+    patch: {
+      ce_id: string;
+      descriptionSheets: EditableBoardDescriptionSheet[];
+    }
   ) => {
     if (!isEditMode) return;
 
+    const canonicalEntity = canonicalEntitiesById.get(patch.ce_id);
+    if (!canonicalEntity) {
+      throw new Error("Выберите существующую canonical entity.");
+    }
+
+    const { nodeChunks, edgeChunksByEdgeId } = buildDescriptionAssignments(
+      id,
+      edges,
+      patch.descriptionSheets,
+      () => allocateNextFreeId("chunk_id")
+    );
+
+    const nodePatch = {
+      ce_id: canonicalEntity.en_id,
+      name: canonicalEntity.name,
+      node_type: canonicalEntity.entity_type,
+      picture_path: getCanonicalEntityPicturePath(canonicalEntity),
+      description: nodeChunks,
+    };
+
+    if (draftNode && draftNode.node_id === id) {
+      setNodes((prev) => [
+        ...prev,
+        {
+          node_id: draftNode.node_id,
+          pos_x: draftNode.pos_x,
+          pos_y: draftNode.pos_y,
+          ...nodePatch,
+        },
+      ].sort((left, right) => left.node_id - right.node_id));
+      setDraftNode(null);
+      setSelectedNodeId(draftNode.node_id);
+      return;
+    }
+
     setNodes((prev) =>
-      prev.map((n) =>
-        n.node_id === id
+      prev.map((node) =>
+        node.node_id === id
           ? {
-              ...n,
-              name: patch.name,
-              description: patch.description,
-              node_type: patch.node_type,
-              ...(patch.picture_path !== undefined ? { picture_path: patch.picture_path } : {}),
+              ...node,
+              ...nodePatch,
             }
-          : n
+          : node
+      )
+    );
+
+    setEdges((prev) =>
+      prev.map((edge) =>
+        edgeChunksByEdgeId.has(edge.edge_id)
+          ? {
+              ...edge,
+              description: edgeChunksByEdgeId.get(edge.edge_id) ?? [],
+            }
+          : edge
       )
     );
   };
 
-  // Upload blob → {id,url}
   const handleUploadImage = (blob: Blob) => {
     if (!isEditMode) {
       return Promise.reject(new Error("Режим редактирования недоступен."));
     }
 
-    // filename не критичен, но пусть будет
-    return fileDataSource.uploadImage(blob, "node.png");
+    return fileDataSource.uploadImage(blob, "canonical-entity.png");
   };
 
-  const handleVersionChange = (version: string) => onChangeVersion(version);
+  const handleCanonicalEntitiesSave = async (
+    nextEntities: CanonicalEntity[]
+  ): Promise<CanonicalEntitiesSyncResult> => {
+    if (!isEditMode) {
+      throw new Error("Режим редактирования недоступен.");
+    }
+
+    const sortedEntities = sortCanonicalEntities(nextEntities);
+    const syncResult = await onCanonicalEntitiesChange(sortedEntities);
+    setCanonicalEntities(sortedEntities);
+    return syncResult;
+  };
+
+  const handleCanonicalEntityDelete = async (
+    entityId: string
+  ): Promise<CanonicalEntityDeleteResult> => {
+    if (!isEditMode) {
+      throw new Error("Режим редактирования недоступен.");
+    }
+
+    const deleteResult = await onCanonicalEntityDelete(entityId);
+    if (deleteResult.outcome === "deleted") {
+      setCanonicalEntities((prev) =>
+        prev.filter((entity) => entity.en_id !== entityId)
+      );
+    }
+
+    return deleteResult;
+  };
+
+  const refreshNodesFromServer = async () => {
+    const nextNodes = await boardDataSource.getNodes(BOARD_ID, currentVersion);
+    setNodes((prev) => mergeRefreshedNodes(prev, nextNodes));
+  };
+
+  const handleCanonicalEntitiesDialogClose = async (shouldRefreshNodes: boolean) => {
+    if (!shouldRefreshNodes) return;
+
+    try {
+      await refreshNodesFromServer();
+    } catch (error) {
+      console.error("[InvestigationBoardScreen] Не удалось обновить ноды после CE", error);
+      window.alert("Не удалось перечитать ноды после изменения canonical entity.");
+    }
+  };
+
+  const handleVersionChange = (version: number) => onChangeVersion(version);
 
   const handlePublish = async () => {
-    if (!isEditMode) return;
-    if (isPublishing) return;
+    if (!isEditMode || isPublishing) return;
+
     setIsPublishing(true);
     try {
-      await boardDataSource.updateBoard({
+      await onPersistBoard({
         version: currentVersion,
         nodes,
         edges,
-        description: null,
-        board_name: null,
         is_published: isPublished,
       });
-      onCurrentVersionPublicationChange(currentVersion, isPublished);
+    } catch (e: unknown) {
+      window.alert(
+        e instanceof Error ? e.message : "Не удалось сохранить текущую версию."
+      );
     } finally {
       setIsPublishing(false);
     }
@@ -242,6 +510,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       title={title}
       nodes={nodes}
       edges={edges}
+      canonicalEntities={canonicalEntities}
       mode={mode}
       selectedNode={selectedNode}
       versions={versions}
@@ -263,6 +532,9 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       onNodeClick={handleNodeClick}
       onNodePositionChange={handleNodePositionChange}
       onSelectedNodeSave={handleSelectedNodeSave}
+      onCanonicalEntitiesChange={handleCanonicalEntitiesSave}
+      onCanonicalEntityDelete={handleCanonicalEntityDelete}
+      onCanonicalEntitiesManagerClose={handleCanonicalEntitiesDialogClose}
       onUploadImage={handleUploadImage}
     />
   );

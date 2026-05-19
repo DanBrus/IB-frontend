@@ -37,6 +37,8 @@ interface BoardToolbarProps {
   onCurrentVersionPublishedChange: (value: boolean) => void;
   onNewVersionClick: () => void;
   onDeleteVersionClick: () => void;
+  onCanonicalEntitiesClick: () => void;
+  onCreateCanonicalEntityClick: () => void;
   canDeleteVersion: boolean;
 }
 
@@ -52,6 +54,8 @@ export const BoardToolbar: React.FC<BoardToolbarProps> = ({
   onCurrentVersionPublishedChange,
   onNewVersionClick,
   onDeleteVersionClick,
+  onCanonicalEntitiesClick,
+  onCreateCanonicalEntityClick,
   canDeleteVersion,
 }) => {
   const nodeAddActive = mode === "add-node";
@@ -144,6 +148,20 @@ export const BoardToolbar: React.FC<BoardToolbarProps> = ({
           />
           <span>Общедоступно</span>
         </label>
+        <button
+          type="button"
+          style={versionButtonStyle}
+          onClick={onCanonicalEntitiesClick}
+        >
+          Сущности
+        </button>
+        <button
+          type="button"
+          style={versionButtonStyle}
+          onClick={onCreateCanonicalEntityClick}
+        >
+          Новая сущность
+        </button>
         <button
           type="button"
           style={versionButtonStyle}

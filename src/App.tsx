@@ -1,11 +1,32 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { InvestigationBoardScreen } from "./InvestigationBoardScreen";
-import type { BoardNode, BoardEdge, BoardVersion, BoardAccessMode } from "./boardTypes";
+import type {
+  BoardAccessMode,
+  BoardEdge,
+  BoardNode,
+  BoardVersion,
+  CanonicalEntity,
+} from "./boardTypes";
+import type {
+  CanonicalEntitiesSyncResult,
+  CanonicalEntityDeleteResult,
+} from "./boardDataSource";
 import { boardDataSource } from "./boardDataSource";
 import { authClient } from "./auth/authClient";
 
 const AUTH_REJECTED_MESSAGE = "Токен безопасности истёк или был введён неверный код безопасности.";
+const BOARD_ID = "demo-board";
+
+type BoardSnapshot = {
+  nodes: BoardNode[];
+  edges: BoardEdge[];
+  versions: BoardVersion[];
+  canonicalEntities: CanonicalEntity[];
+  currentVersion: number | null;
+};
+
+type VersionFallbackStrategy = "min" | "max";
 
 function isVersionVisible(version: BoardVersion, accessMode: BoardAccessMode): boolean {
   return accessMode === "edit" || version.is_published !== false;
@@ -17,24 +38,71 @@ function getVisibleVersions(versions: BoardVersion[], accessMode: BoardAccessMod
 
 function resolveCurrentVersion(
   versions: BoardVersion[],
-  requestedVersion: string | null | undefined,
-  accessMode: BoardAccessMode
-): string | null {
+  requestedVersion: number | null | undefined,
+  accessMode: BoardAccessMode,
+  fallbackStrategy: VersionFallbackStrategy = "max"
+): number | null {
   const visibleVersions = getVisibleVersions(versions, accessMode);
 
   if (visibleVersions.length === 0) return null;
-  if (requestedVersion && visibleVersions.some((version) => version.version === requestedVersion)) {
+  if (
+    requestedVersion !== null &&
+    requestedVersion !== undefined &&
+    visibleVersions.some((version) => version.version === requestedVersion)
+  ) {
     return requestedVersion;
   }
 
-  return visibleVersions[0]?.version ?? null;
+  return fallbackStrategy === "min"
+    ? visibleVersions[0]?.version ?? null
+    : visibleVersions[visibleVersions.length - 1]?.version ?? null;
+}
+
+async function loadBoardSnapshot(
+  boardId: string,
+  accessMode: BoardAccessMode,
+  requestedVersion: number | null | undefined,
+  fallbackStrategy: VersionFallbackStrategy = "max"
+): Promise<BoardSnapshot> {
+  const [versionsList, canonicalEntitiesList] = await Promise.all([
+    boardDataSource.getVersions(boardId),
+    boardDataSource.getCanonicalEntities(boardId),
+  ]);
+
+  const resolvedVersion = resolveCurrentVersion(
+    versionsList,
+    requestedVersion,
+    accessMode,
+    fallbackStrategy
+  );
+
+  if (resolvedVersion === null) {
+    return {
+      nodes: [],
+      edges: [],
+      versions: versionsList,
+      canonicalEntities: canonicalEntitiesList,
+      currentVersion: null,
+    };
+  }
+
+  const graph = await boardDataSource.getCurrentBoard(boardId, resolvedVersion);
+
+  return {
+    nodes: graph.nodes,
+    edges: graph.edges,
+    versions: versionsList,
+    canonicalEntities: canonicalEntitiesList,
+    currentVersion: resolvedVersion,
+  };
 }
 
 export default function App() {
   const [nodes, setNodes] = useState<BoardNode[]>([]);
   const [edges, setEdges] = useState<BoardEdge[]>([]);
   const [versions, setVersions] = useState<BoardVersion[]>([]);
-  const [currentVersion, setCurrentVersion] = useState<string | null>(null);
+  const [canonicalEntities, setCanonicalEntities] = useState<CanonicalEntity[]>([]);
+  const [currentVersion, setCurrentVersion] = useState<number | null>(null);
 
   const [accessMode, setAccessMode] = useState<BoardAccessMode>("read");
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
@@ -45,8 +113,15 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const applyBoardSnapshot = (snapshot: BoardSnapshot) => {
+    setNodes(snapshot.nodes);
+    setEdges(snapshot.edges);
+    setVersions(snapshot.versions);
+    setCanonicalEntities(snapshot.canonicalEntities);
+    setCurrentVersion(snapshot.currentVersion);
+  };
+
   useEffect(() => {
-    const boardId = "demo-board";
     setLoading(true);
     setError(null);
 
@@ -54,32 +129,9 @@ export default function App() {
 
     (async () => {
       try {
-        const [versionsList, activeVersion] = await Promise.all([
-          boardDataSource.getVersions(boardId),
-          boardDataSource.getActiveVersion(boardId),
-        ]);
-
+        const snapshot = await loadBoardSnapshot(BOARD_ID, "read", null, "min");
         if (cancelled) return;
-
-        const initialVersion = resolveCurrentVersion(versionsList, activeVersion, "read");
-        setVersions(versionsList);
-        setCurrentVersion(initialVersion);
-
-        if (!initialVersion) {
-          setNodes([]);
-          setEdges([]);
-          setLoading(false);
-          return;
-        }
-
-        const graph = await boardDataSource.getCurrentBoard(
-          boardId,
-          initialVersion
-        );
-        if (cancelled) return;
-
-        setNodes(graph.nodes);
-        setEdges(graph.edges);
+        applyBoardSnapshot(snapshot);
         setLoading(false);
       } catch {
         if (cancelled) return;
@@ -93,16 +145,15 @@ export default function App() {
     };
   }, []);
 
-  const handleChangeVersion = async (version: string) => {
-    const boardId = "demo-board";
+  const handleChangeVersion = async (version: number) => {
     const nextVersion = resolveCurrentVersion(versions, version, accessMode);
-    if (!nextVersion || nextVersion !== version) return;
+    if (nextVersion === null || nextVersion !== version) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const graph = await boardDataSource.getCurrentBoard(boardId, nextVersion);
+      const graph = await boardDataSource.getCurrentBoard(BOARD_ID, nextVersion);
       setNodes(graph.nodes);
       setEdges(graph.edges);
       setCurrentVersion(nextVersion);
@@ -114,7 +165,7 @@ export default function App() {
   };
 
   const handleCreateVersion = async (payload: {
-    version: string;
+    version: number;
     name: string;
     description: string;
     is_published?: boolean | null;
@@ -123,20 +174,13 @@ export default function App() {
       throw new Error("Режим редактирования недоступен.");
     }
 
-    const boardId = "demo-board";
     setLoading(true);
     setError(null);
 
     try {
       await boardDataSource.createVersion(payload);
-      const [versionsList, graph] = await Promise.all([
-        boardDataSource.getVersions(boardId),
-        boardDataSource.getCurrentBoard(boardId, payload.version),
-      ]);
-      setVersions(versionsList);
-      setNodes(graph.nodes);
-      setEdges(graph.edges);
-      setCurrentVersion(payload.version);
+      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, payload.version);
+      applyBoardSnapshot(snapshot);
       setLoading(false);
     } catch {
       setError("Не удалось создать новую версию доски");
@@ -144,59 +188,73 @@ export default function App() {
     }
   };
 
-  const handleCurrentVersionPublicationChange = (version: string, isPublished: boolean) => {
-    setVersions((prev) =>
-      prev.map((item) =>
-        item.version === version
-          ? {
-              ...item,
-              is_published: isPublished,
-            }
-          : item
-      )
-    );
+  const handleCanonicalEntitiesChange = async (
+    nextEntities: CanonicalEntity[]
+  ): Promise<CanonicalEntitiesSyncResult> => {
+    const syncResult = await boardDataSource.updateCanonicalEntities(BOARD_ID, nextEntities);
+    setCanonicalEntities(nextEntities);
+    return syncResult;
   };
 
-  const handleDeleteVersion = async (version: string) => {
+  const handleCanonicalEntityDelete = async (
+    entityId: string
+  ): Promise<CanonicalEntityDeleteResult> => {
+    const deleteResult = await boardDataSource.deleteCanonicalEntity(BOARD_ID, entityId);
+
+    if (deleteResult.outcome === "deleted") {
+      setCanonicalEntities((prev) => prev.filter((entity) => entity.en_id !== entityId));
+    }
+
+    return deleteResult;
+  };
+
+  const handleDeleteVersion = async (version: number) => {
     if (accessMode !== "edit") {
       throw new Error("Режим редактирования недоступен.");
     }
 
-    const boardId = "demo-board";
     try {
-      const active = await boardDataSource.getActiveVersion(boardId);
-      if (active === version) {
-        throw new Error("Невозможно удалить активную версию доски");
-      }
-
       await boardDataSource.deleteVersion({ version });
+      const snapshot = await loadBoardSnapshot(
+        BOARD_ID,
+        accessMode,
+        currentVersion === version ? null : currentVersion
+      );
+      applyBoardSnapshot(snapshot);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Не удалось удалить версию доски";
+      console.error(message);
+      throw new Error(message);
+    }
+  };
 
-      const versionsList = await boardDataSource.getVersions(boardId);
-      setVersions(versionsList);
+  const handlePersistBoard = async (payload: {
+    version: number;
+    nodes: BoardNode[];
+    edges: BoardEdge[];
+    is_published: boolean;
+  }) => {
+    if (accessMode !== "edit") {
+      throw new Error("Режим редактирования недоступен.");
+    }
 
-      let nextVersion: string | null = currentVersion;
-      if (!versionsList.some((v) => v.version === nextVersion)) {
-        const activeAfter = await boardDataSource.getActiveVersion(boardId);
-        nextVersion =
-          versionsList.find((v) => v.version === activeAfter)?.version ??
-          versionsList[0]?.version ??
-          null;
-      }
+    try {
+      await boardDataSource.updateBoard({
+        version: payload.version,
+        nodes: payload.nodes,
+        edges: payload.edges,
+        description: null,
+        board_name: null,
+        is_published: payload.is_published,
+      });
 
-      if (nextVersion) {
-        const graph = await boardDataSource.getCurrentBoard(boardId, nextVersion);
-        setNodes(graph.nodes);
-        setEdges(graph.edges);
-        setCurrentVersion(nextVersion);
-      } else {
-        setNodes([]);
-        setEdges([]);
-        setCurrentVersion(null);
-      }
-    } catch (e: any) {
-      const msg = e?.message ? String(e.message) : "Не удалось удалить версию доски";
-      console.error(msg);
-      throw new Error(msg);
+      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, payload.version);
+      applyBoardSnapshot(snapshot);
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error ? e.message : "Не удалось сохранить текущую версию.";
+      console.error(message);
+      throw new Error(message);
     }
   };
 
@@ -278,7 +336,7 @@ export default function App() {
 
   if (loading) return <div>Загружаем доску…</div>;
   if (error) return <div>{error}</div>;
-  if (!currentVersion) return <div>Нет опубликованных досок для режима просмотра.</div>;
+  if (currentVersion === null) return <div>Нет опубликованных досок для режима просмотра.</div>;
 
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
@@ -287,13 +345,16 @@ export default function App() {
         title="Доска расследований"
         initialNodes={nodes}
         initialEdges={edges}
+        initialCanonicalEntities={canonicalEntities}
         versions={visibleVersions}
         currentVersion={currentVersion}
         accessMode={accessMode}
         onChangeVersion={handleChangeVersion}
         onCreateVersion={handleCreateVersion}
         onDeleteVersion={handleDeleteVersion}
-        onCurrentVersionPublicationChange={handleCurrentVersionPublicationChange}
+        onPersistBoard={handlePersistBoard}
+        onCanonicalEntitiesChange={handleCanonicalEntitiesChange}
+        onCanonicalEntityDelete={handleCanonicalEntityDelete}
         onRequestEditMode={handleRequestEditMode}
       />
 
