@@ -175,6 +175,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   const [deleting, setDeleting] = useState(false);
 
   const [imageChanged, setImageChanged] = useState(false);
+  const [imageRemoved, setImageRemoved] = useState(false);
   const [pickedFileName, setPickedFileName] = useState<string>("image.png");
   const [imageSrcForCrop, setImageSrcForCrop] = useState<string | null>(null);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
@@ -190,9 +191,13 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const currentPicturePath = useMemo(() => getCanonicalEntityPicturePath(entity), [entity]);
+  const effectiveCurrentPicturePath = imageRemoved ? null : currentPicturePath;
   const currentImgUrl = useMemo(
-    () => (currentPicturePath ? `${FILE_RES_BASE_URL}/res/${currentPicturePath}` : null),
-    [currentPicturePath]
+    () =>
+      effectiveCurrentPicturePath
+        ? `${FILE_RES_BASE_URL}/res/${effectiveCurrentPicturePath}`
+        : null,
+    [effectiveCurrentPicturePath]
   );
   const availableMergeTargets = useMemo(
     () =>
@@ -201,6 +206,13 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
       ),
     [entity.en_id, existingEntities]
   );
+  const hasPendingImageSelection =
+    imageSrcForCrop !== null || croppedBlob !== null || previewUrl !== null;
+  const canRemoveImage = Boolean(currentPicturePath) || hasPendingImageSelection;
+  const removeImageButtonLabel =
+    currentPicturePath && imageRemoved && !hasPendingImageSelection
+      ? "Вернуть изображение"
+      : "Удалить изображение";
 
   useEffect(() => {
     return () => {
@@ -220,7 +232,26 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
     setMetadataSaving(false);
     setMetadataError(null);
     setMetadataAuthorDraft("");
-  }, [entity.en_id, currentPicturePath]);
+  }, [effectiveCurrentPicturePath, entity.en_id]);
+
+  const clearPendingImageSelection = () => {
+    setImageChanged(false);
+    setPickedFileName("image.png");
+    setCroppedAreaPixels(null);
+    setCrop({ x: 0, y: 0 });
+    setZoom(1);
+    setCroppedBlob(null);
+
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+
+    if (imageSrcForCrop) {
+      URL.revokeObjectURL(imageSrcForCrop);
+      setImageSrcForCrop(null);
+    }
+  };
 
   const openFileDialog = () => {
     fileInputRef.current?.click();
@@ -234,6 +265,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
 
     setError(null);
     setPickedFileName(file.name || "image.png");
+    setImageRemoved(false);
 
     const nextUrl = URL.createObjectURL(file);
     setImageSrcForCrop(nextUrl);
@@ -284,7 +316,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   };
 
   const handleOpenMetadataDialog = async () => {
-    if (!currentPicturePath || saving || deleting || metadataLoading) return;
+    if (!effectiveCurrentPicturePath || saving || deleting || metadataLoading) return;
 
     setError(null);
     setMetadataLoading(true);
@@ -292,7 +324,8 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
       const loadedMetadata =
         currentPictureMetadata !== undefined
           ? currentPictureMetadata ?? null
-          : (await onLoadImageMetadata([currentPicturePath]))[currentPicturePath] ?? null;
+          : (await onLoadImageMetadata([effectiveCurrentPicturePath]))[effectiveCurrentPicturePath] ??
+            null;
 
       setMetadataAuthorDraft(
         typeof loadedMetadata?.author === "string" ? loadedMetadata.author : ""
@@ -317,14 +350,14 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   };
 
   const handleSaveMetadata = async () => {
-    if (!currentPicturePath) return;
+    if (!effectiveCurrentPicturePath) return;
 
     setMetadataSaving(true);
     setMetadataError(null);
     try {
       const normalizedAuthor = metadataAuthorDraft.trim();
       await onUpdateImageMetadata(
-        currentPicturePath,
+        effectiveCurrentPicturePath,
         normalizedAuthor ? { author: normalizedAuthor } : null
       );
       setMetadataDialogOpen(false);
@@ -337,6 +370,23 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
     } finally {
       setMetadataSaving(false);
     }
+  };
+
+  const handleToggleImageRemoval = () => {
+    if (saving || deleting || metadataLoading || metadataSaving) return;
+
+    setError(null);
+
+    if (currentPicturePath && imageRemoved && !hasPendingImageSelection) {
+      setImageRemoved(false);
+      return;
+    }
+
+    clearPendingImageSelection();
+    setImageRemoved(Boolean(currentPicturePath));
+    setMetadataDialogOpen(false);
+    setMetadataError(null);
+    setMetadataAuthorDraft("");
   };
 
   const handleSave = async () => {
@@ -370,7 +420,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
     setError(null);
 
     try {
-      let picturePaths = [...entity.picture_paths];
+      let picturePaths = imageRemoved ? [] : [...entity.picture_paths];
       if (imageChanged && croppedBlob) {
         const uploadResult = await onUploadImage(croppedBlob);
         picturePaths = [...picturePaths.filter(Boolean), uploadResult.id];
@@ -609,7 +659,9 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
                   boxSizing: "border-box",
                 }}
               >
-                У этой сущности пока нет изображения.
+                {imageRemoved && currentPicturePath
+                  ? "Изображение будет отвязано после сохранения сущности."
+                  : "У этой сущности пока нет изображения."}
               </div>
             )}
           </div>
@@ -619,17 +671,20 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
               type="button"
               onClick={handleOpenMetadataDialog}
               disabled={
-                !currentPicturePath ||
+                !effectiveCurrentPicturePath ||
                 imageChanged ||
                 saving ||
                 deleting ||
+                imageRemoved ||
                 metadataLoading ||
                 metadataSaving
               }
               title={
                 imageChanged
                   ? "Сначала сохраните сущность, чтобы редактировать метаданные новой картинки."
-                  : !currentPicturePath
+                  : imageRemoved
+                    ? "Сначала сохраните удаление картинки или отмените его."
+                    : !effectiveCurrentPicturePath
                     ? "Метаданные можно редактировать только у сохранённой картинки."
                     : undefined
               }
@@ -638,28 +693,31 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
                 borderRadius: 6,
                 border: "1px solid #777",
                 backgroundColor:
-                  !currentPicturePath ||
+                  !effectiveCurrentPicturePath ||
                   imageChanged ||
                   saving ||
                   deleting ||
+                  imageRemoved ||
                   metadataLoading ||
                   metadataSaving
                     ? "#f2f2f2"
                     : "#fff",
                 color:
-                  !currentPicturePath ||
+                  !effectiveCurrentPicturePath ||
                   imageChanged ||
                   saving ||
                   deleting ||
+                  imageRemoved ||
                   metadataLoading ||
                   metadataSaving
                     ? "#888"
                     : "#333",
                 cursor:
-                  !currentPicturePath ||
+                  !effectiveCurrentPicturePath ||
                   imageChanged ||
                   saving ||
                   deleting ||
+                  imageRemoved ||
                   metadataLoading ||
                   metadataSaving
                     ? "default"
@@ -668,6 +726,37 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
               }}
             >
               {metadataLoading ? "Загружаю метаданные…" : "Ред. метаданные"}
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleImageRemoval}
+              disabled={
+                !canRemoveImage ||
+                saving ||
+                deleting ||
+                metadataLoading ||
+                metadataSaving
+              }
+              style={{
+                padding: "6px 10px",
+                borderRadius: 6,
+                border: "1px solid #9c4d4d",
+                backgroundColor:
+                  !canRemoveImage || saving || deleting || metadataLoading || metadataSaving
+                    ? "#f2f2f2"
+                    : "#fff",
+                color:
+                  !canRemoveImage || saving || deleting || metadataLoading || metadataSaving
+                    ? "#888"
+                    : "#7a1f1f",
+                cursor:
+                  !canRemoveImage || saving || deleting || metadataLoading || metadataSaving
+                    ? "default"
+                    : "pointer",
+                fontSize: 12,
+              }}
+            >
+              {removeImageButtonLabel}
             </button>
           </div>
 
