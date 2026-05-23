@@ -14,6 +14,7 @@ import type {
   CanonicalEntitiesSyncResult,
   CanonicalEntityDeleteResult,
 } from "./boardDataSource";
+import type { PictureMeta } from "./fileDataSource";
 import { CanonicalEntityManager } from "./components/CanonicalEntityManager";
 import { CanonicalEntityBrowser } from "./components/CanonicalEntityBrowser";
 import { InvestigationBoardHeader } from "./components/InvestigationBoardHeader";
@@ -25,6 +26,8 @@ interface InvestigationBoardProps {
   nodes: BoardNode[];
   edges: BoardEdge[];
   canonicalEntities: CanonicalEntity[];
+  pictureMetaById: Record<string, PictureMeta | null>;
+  nodePictureMetaByNodeId: Record<number, PictureMeta | null>;
   mode: BoardMode;
   selectedNode: BoardNode | null;
 
@@ -78,6 +81,13 @@ interface InvestigationBoardProps {
   ) => Promise<CanonicalEntityDeleteResult>;
   onCreateCanonicalEntityDraft: () => CanonicalEntity | null;
   onCanonicalEntitiesManagerClose: (shouldRefreshNodes: boolean) => void | Promise<void>;
+  onLoadImageMetadata: (
+    pictureIds: string[]
+  ) => Promise<Record<string, PictureMeta | null>>;
+  onUpdateImageMetadata: (
+    pictureId: string,
+    metadata: PictureMeta | null
+  ) => Promise<PictureMeta | null>;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
   onOpenCanonicalEntityAnalysis: (ceId: number) => Promise<void>;
 }
@@ -87,6 +97,8 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   nodes,
   edges,
   canonicalEntities,
+  pictureMetaById,
+  nodePictureMetaByNodeId,
   mode,
   selectedNode,
   versions,
@@ -115,6 +127,8 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   onCanonicalEntityDelete,
   onCreateCanonicalEntityDraft,
   onCanonicalEntitiesManagerClose,
+  onLoadImageMetadata,
+  onUpdateImageMetadata,
   onUploadImage,
   onOpenCanonicalEntityAnalysis,
 }) => {
@@ -131,6 +145,8 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   const [canonicalEntitiesOpen, setCanonicalEntitiesOpen] = useState(false);
   const [canonicalEntityBrowserOpen, setCanonicalEntityBrowserOpen] = useState(false);
   const [canonicalEntityCreateRequestToken, setCanonicalEntityCreateRequestToken] = useState(0);
+  const [canonicalEntityEditTargetId, setCanonicalEntityEditTargetId] = useState<number | null>(null);
+  const [canonicalEntityEditRequestToken, setCanonicalEntityEditRequestToken] = useState(0);
 
   const openNewVersionDialog = () => {
     if (accessMode !== "edit") return;
@@ -210,12 +226,16 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
 
   const openCanonicalEntitiesDialog = () => {
     if (accessMode !== "edit") return;
+    setCanonicalEntityEditTargetId(null);
+    setCanonicalEntityEditRequestToken(0);
     setCanonicalEntitiesOpen(true);
   };
 
   const closeCanonicalEntitiesDialog = (options?: { shouldRefreshNodes: boolean }) => {
     setCanonicalEntitiesOpen(false);
     setCanonicalEntityCreateRequestToken(0);
+    setCanonicalEntityEditTargetId(null);
+    setCanonicalEntityEditRequestToken(0);
     void onCanonicalEntitiesManagerClose(options?.shouldRefreshNodes ?? false);
   };
 
@@ -231,7 +251,17 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   const handleQuickCreateCanonicalEntity = () => {
     if (accessMode !== "edit") return;
     setCanonicalEntitiesOpen(true);
+    setCanonicalEntityEditTargetId(null);
+    setCanonicalEntityEditRequestToken(0);
     setCanonicalEntityCreateRequestToken((prev) => prev + 1);
+  };
+
+  const handleOpenCanonicalEntityEditor = (entityId: number) => {
+    if (accessMode !== "edit") return;
+    setCanonicalEntitiesOpen(true);
+    setCanonicalEntityCreateRequestToken(0);
+    setCanonicalEntityEditTargetId(entityId);
+    setCanonicalEntityEditRequestToken((prev) => prev + 1);
   };
 
   return (
@@ -274,6 +304,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         nodes={nodes}
         edges={edges}
         canonicalEntities={canonicalEntities}
+        nodePictureMetaByNodeId={nodePictureMetaByNodeId}
         mode={mode}
         selectedNode={selectedNode}
         accessMode={accessMode}
@@ -283,6 +314,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         onNodeClick={onNodeClick}
         onNodePositionChange={onNodePositionChange}
         onSelectedNodeSave={onSelectedNodeSave}
+        onOpenCanonicalEntityEditor={handleOpenCanonicalEntityEditor}
         onOpenCanonicalEntityAnalysis={onOpenCanonicalEntityAnalysis}
       />
 
@@ -290,10 +322,15 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         <CanonicalEntityManager
           entities={canonicalEntities}
           createRequestToken={canonicalEntityCreateRequestToken}
+          editEntityId={canonicalEntityEditTargetId}
+          editRequestToken={canonicalEntityEditRequestToken}
           onCreateEntityDraft={onCreateCanonicalEntityDraft}
           onClose={closeCanonicalEntitiesDialog}
           onChange={onCanonicalEntitiesChange}
           onDelete={onCanonicalEntityDelete}
+          pictureMetaById={pictureMetaById}
+          onLoadImageMetadata={onLoadImageMetadata}
+          onUpdateImageMetadata={onUpdateImageMetadata}
           onUploadImage={onUploadImage}
         />
       )}

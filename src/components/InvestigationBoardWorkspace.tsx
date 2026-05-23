@@ -6,6 +6,7 @@ import {
   formatCanonicalEntityId,
   resolveCanonicalEntityRootId,
 } from "../canonicalEntities";
+import type { PictureMeta } from "../fileDataSource";
 import type {
   BoardAccessMode,
   BoardViewMode,
@@ -57,6 +58,7 @@ interface InvestigationBoardWorkspaceProps {
   nodes: BoardNode[];
   edges: BoardEdge[];
   canonicalEntities: CanonicalEntity[];
+  nodePictureMetaByNodeId: Record<number, PictureMeta | null>;
   mode: BoardMode;
   selectedNode: BoardNode | null;
   accessMode: BoardAccessMode;
@@ -72,6 +74,7 @@ interface InvestigationBoardWorkspaceProps {
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => Promise<void>;
+  onOpenCanonicalEntityEditor: (entityId: number) => void;
   onOpenCanonicalEntityAnalysis: (ceId: number) => Promise<void>;
 }
 
@@ -79,6 +82,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   nodes,
   edges,
   canonicalEntities,
+  nodePictureMetaByNodeId,
   mode,
   selectedNode,
   accessMode,
@@ -88,6 +92,7 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
   onNodeClick,
   onNodePositionChange,
   onSelectedNodeSave,
+  onOpenCanonicalEntityEditor,
   onOpenCanonicalEntityAnalysis,
 }) => {
   const isMobile = useIsMobile();
@@ -144,6 +149,8 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
 
   const readPanelNode =
     accessMode === "read" && readPanelNodeId !== null ? nodesById.get(readPanelNodeId) ?? null : null;
+  const readPanelPictureMeta =
+    readPanelNode !== null ? nodePictureMetaByNodeId[readPanelNode.node_id] ?? null : null;
   const readPanelSheets = useMemo(
     () => buildNodeDescriptionSheets(readPanelNode, nodes, edges),
     [readPanelNode, nodes, edges]
@@ -609,12 +616,14 @@ export const InvestigationBoardWorkspace: React.FC<InvestigationBoardWorkspacePr
           descriptionSheets={selectedNodeSheets}
           connectedNodes={connectedNodes}
           onSaveNode={onSelectedNodeSave}
+          onOpenCanonicalEntityEditor={onOpenCanonicalEntityEditor}
         />
       )}
 
       {accessMode === "read" && readPanelNodeId !== null && (
         <NodeReadPanel
           node={readPanelNode}
+          pictureMeta={readPanelPictureMeta}
           descriptionSheets={readPanelSheets}
           onClose={handleReadPanelClose}
           mobile={isMobile}

@@ -23,7 +23,7 @@ import type {
   CanonicalEntityDeleteResult,
 } from "./boardDataSource";
 import { boardDataSource } from "./boardDataSource";
-import { fileDataSource } from "./fileDataSource";
+import { fileDataSource, type PictureMeta } from "./fileDataSource";
 
 const BOARD_ID = "demo-board";
 
@@ -103,6 +103,10 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   const [isPublished, setIsPublished] = useState(Boolean(initialIsPublished));
   const [freeIdsLoading, setFreeIdsLoading] = useState(false);
   const [freeIdsError, setFreeIdsError] = useState<string | null>(null);
+  const [pictureMetaById, setPictureMetaById] = useState<Record<string, PictureMeta | null>>({});
+  const [nodePictureMetaByNodeId, setNodePictureMetaByNodeId] = useState<
+    Record<number, PictureMeta | null>
+  >({});
   const freeIdsRef = useRef<FreeIds | null>(null);
 
   const nodesById = useMemo(() => {
@@ -116,6 +120,32 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
     canonicalEntities.forEach((entity) => map.set(entity.en_id, entity));
     return map;
   }, [canonicalEntities]);
+
+  const pictureNodeIdsMap = useMemo(() => {
+    const map = new Map<string, number[]>();
+
+    nodes.forEach((node) => {
+      const pictureId =
+        typeof node.picture_path === "string" ? node.picture_path.trim() : "";
+      if (!pictureId) return;
+
+      const nodeIds = map.get(pictureId);
+      if (nodeIds) {
+        nodeIds.push(node.node_id);
+        return;
+      }
+
+      map.set(pictureId, [node.node_id]);
+    });
+
+    return map;
+  }, [nodes]);
+
+  const pictureIds = useMemo(
+    () => [...pictureNodeIdsMap.keys()].sort((left, right) => left.localeCompare(right)),
+    [pictureNodeIdsMap]
+  );
+  const pictureIdsKey = pictureIds.join("|");
 
   useEffect(() => {
     setIsPublished(Boolean(initialIsPublished));
@@ -133,6 +163,50 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   useEffect(() => {
     setCanonicalEntities(sortCanonicalEntities(initialCanonicalEntities));
   }, [initialCanonicalEntities]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (pictureIds.length === 0) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void fileDataSource
+      .getImageMetadata(pictureIds)
+      .then((nextMetadata) => {
+        if (cancelled) return;
+        setPictureMetaById((prev) => ({
+          ...prev,
+          ...nextMetadata,
+        }));
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        console.error("[InvestigationBoardScreen] Не удалось загрузить метаданные картинок", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pictureIdsKey]);
+
+  useEffect(() => {
+    const nextNodePictureMetaByNodeId: Record<number, PictureMeta | null> = {};
+
+    pictureNodeIdsMap.forEach((nodeIds, pictureId) => {
+      const pictureMeta = Object.prototype.hasOwnProperty.call(pictureMetaById, pictureId)
+        ? pictureMetaById[pictureId] ?? null
+        : null;
+
+      nodeIds.forEach((nodeId) => {
+        nextNodePictureMetaByNodeId[nodeId] = pictureMeta;
+      });
+    });
+
+    setNodePictureMetaByNodeId(nextNodePictureMetaByNodeId);
+  }, [pictureMetaById, pictureNodeIdsMap]);
 
   const isEditMode = accessMode === "edit";
 
@@ -427,6 +501,33 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
     return fileDataSource.uploadImage(blob, "canonical-entity.png");
   };
 
+  const handleLoadImageMetadata = async (
+    pictureIdsToLoad: string[]
+  ): Promise<Record<string, PictureMeta | null>> => {
+    const nextMetadata = await fileDataSource.getImageMetadata(pictureIdsToLoad);
+    setPictureMetaById((prev) => ({
+      ...prev,
+      ...nextMetadata,
+    }));
+    return nextMetadata;
+  };
+
+  const handleUpdateImageMetadata = async (
+    pictureId: string,
+    metadata: PictureMeta | null
+  ): Promise<PictureMeta | null> => {
+    if (!isEditMode) {
+      throw new Error("Режим редактирования недоступен.");
+    }
+
+    const updatedMetadata = await fileDataSource.updateImageMetadata(pictureId, metadata);
+    setPictureMetaById((prev) => ({
+      ...prev,
+      [pictureId]: updatedMetadata,
+    }));
+    return updatedMetadata;
+  };
+
   const handleCanonicalEntitiesSave = async (
     nextEntities: CanonicalEntity[]
   ): Promise<CanonicalEntitiesSyncResult> => {
@@ -487,6 +588,8 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       nodes={nodes}
       edges={edges}
       canonicalEntities={canonicalEntities}
+      pictureMetaById={pictureMetaById}
+      nodePictureMetaByNodeId={nodePictureMetaByNodeId}
       mode={mode}
       selectedNode={selectedNode}
       versions={versions}
@@ -515,6 +618,8 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       onCanonicalEntityDelete={handleCanonicalEntityDelete}
       onCreateCanonicalEntityDraft={createCanonicalEntityDraft}
       onCanonicalEntitiesManagerClose={handleCanonicalEntitiesDialogClose}
+      onLoadImageMetadata={handleLoadImageMetadata}
+      onUpdateImageMetadata={handleUpdateImageMetadata}
       onUploadImage={handleUploadImage}
       onOpenCanonicalEntityAnalysis={onOpenCanonicalEntityAnalysis}
     />

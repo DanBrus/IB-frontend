@@ -12,7 +12,7 @@ import type {
   CanonicalEntitiesSyncResult,
   CanonicalEntityDeleteResult,
 } from "../boardDataSource";
-import { FILE_RES_BASE_URL } from "../fileDataSource";
+import { FILE_RES_BASE_URL, type PictureMeta } from "../fileDataSource";
 
 type Area = { x: number; y: number; width: number; height: number };
 type EntityEditorState = {
@@ -23,10 +23,20 @@ type EntityEditorState = {
 interface CanonicalEntityManagerProps {
   entities: CanonicalEntity[];
   createRequestToken: number;
+  editEntityId?: number | null;
+  editRequestToken?: number;
   onCreateEntityDraft: () => CanonicalEntity | null;
   onClose: (options?: { shouldRefreshNodes: boolean }) => void;
   onChange: (entities: CanonicalEntity[]) => Promise<CanonicalEntitiesSyncResult>;
   onDelete: (entityId: number) => Promise<CanonicalEntityDeleteResult>;
+  pictureMetaById: Record<string, PictureMeta | null>;
+  onLoadImageMetadata: (
+    pictureIds: string[]
+  ) => Promise<Record<string, PictureMeta | null>>;
+  onUpdateImageMetadata: (
+    pictureId: string,
+    metadata: PictureMeta | null
+  ) => Promise<PictureMeta | null>;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
@@ -37,6 +47,14 @@ interface CanonicalEntityEditorDialogProps {
   onClose: () => void;
   onSave: (nextEntity: CanonicalEntity, previousEntityId: number | null) => Promise<void>;
   onDelete?: (() => Promise<CanonicalEntityDeleteResult>) | null;
+  currentPictureMetadata?: PictureMeta | null;
+  onLoadImageMetadata: (
+    pictureIds: string[]
+  ) => Promise<Record<string, PictureMeta | null>>;
+  onUpdateImageMetadata: (
+    pictureId: string,
+    metadata: PictureMeta | null
+  ) => Promise<PictureMeta | null>;
   onUploadImage: (blob: Blob) => Promise<{ id: string; url: string }>;
 }
 
@@ -118,6 +136,23 @@ function buildGroupedEntities(entities: CanonicalEntity[], searchTerm: string) {
   );
 }
 
+function getCanonicalEntityDisplayName(entity: CanonicalEntity): string {
+  const normalizedName = entity.name.trim();
+  return normalizedName || formatCanonicalEntityId(entity.en_id);
+}
+
+function sortMergeTargetEntities(entities: CanonicalEntity[]): CanonicalEntity[] {
+  return [...entities].sort(
+    (left, right) =>
+      getCanonicalEntityDisplayName(left).localeCompare(
+        getCanonicalEntityDisplayName(right),
+        "ru"
+      ) ||
+      left.entity_type.localeCompare(right.entity_type, "ru") ||
+      left.en_id - right.en_id
+  );
+}
+
 const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = ({
   entity,
   isNew,
@@ -125,6 +160,9 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   onClose,
   onSave,
   onDelete,
+  currentPictureMetadata,
+  onLoadImageMetadata,
+  onUpdateImageMetadata,
   onUploadImage,
 }) => {
   const [name, setName] = useState(entity.name);
@@ -144,15 +182,21 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   const [zoom, setZoom] = useState(1);
   const [croppedBlob, setCroppedBlob] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [metadataDialogOpen, setMetadataDialogOpen] = useState(false);
+  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [metadataSaving, setMetadataSaving] = useState(false);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [metadataAuthorDraft, setMetadataAuthorDraft] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const currentImgUrl = useMemo(() => {
-    const picturePath = getCanonicalEntityPicturePath(entity);
-    return picturePath ? `${FILE_RES_BASE_URL}/res/${picturePath}` : null;
-  }, [entity]);
+  const currentPicturePath = useMemo(() => getCanonicalEntityPicturePath(entity), [entity]);
+  const currentImgUrl = useMemo(
+    () => (currentPicturePath ? `${FILE_RES_BASE_URL}/res/${currentPicturePath}` : null),
+    [currentPicturePath]
+  );
   const availableMergeTargets = useMemo(
     () =>
-      sortCanonicalEntities(
+      sortMergeTargetEntities(
         existingEntities.filter((existingEntity) => existingEntity.en_id !== entity.en_id)
       ),
     [entity.en_id, existingEntities]
@@ -169,6 +213,14 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
       if (imageSrcForCrop) URL.revokeObjectURL(imageSrcForCrop);
     };
   }, [imageSrcForCrop]);
+
+  useEffect(() => {
+    setMetadataDialogOpen(false);
+    setMetadataLoading(false);
+    setMetadataSaving(false);
+    setMetadataError(null);
+    setMetadataAuthorDraft("");
+  }, [entity.en_id, currentPicturePath]);
 
   const openFileDialog = () => {
     fileInputRef.current?.click();
@@ -228,6 +280,62 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
       setPreviewUrl(URL.createObjectURL(blob));
     } catch {
       setError("Не удалось обрезать изображение.");
+    }
+  };
+
+  const handleOpenMetadataDialog = async () => {
+    if (!currentPicturePath || saving || deleting || metadataLoading) return;
+
+    setError(null);
+    setMetadataLoading(true);
+    try {
+      const loadedMetadata =
+        currentPictureMetadata !== undefined
+          ? currentPictureMetadata ?? null
+          : (await onLoadImageMetadata([currentPicturePath]))[currentPicturePath] ?? null;
+
+      setMetadataAuthorDraft(
+        typeof loadedMetadata?.author === "string" ? loadedMetadata.author : ""
+      );
+      setMetadataError(null);
+      setMetadataDialogOpen(true);
+    } catch (metadataLoadError: unknown) {
+      setError(
+        metadataLoadError instanceof Error
+          ? metadataLoadError.message
+          : "Не удалось загрузить метаданные изображения."
+      );
+    } finally {
+      setMetadataLoading(false);
+    }
+  };
+
+  const handleCloseMetadataDialog = () => {
+    if (metadataSaving) return;
+    setMetadataDialogOpen(false);
+    setMetadataError(null);
+  };
+
+  const handleSaveMetadata = async () => {
+    if (!currentPicturePath) return;
+
+    setMetadataSaving(true);
+    setMetadataError(null);
+    try {
+      const normalizedAuthor = metadataAuthorDraft.trim();
+      await onUpdateImageMetadata(
+        currentPicturePath,
+        normalizedAuthor ? { author: normalizedAuthor } : null
+      );
+      setMetadataDialogOpen(false);
+    } catch (metadataSaveError: unknown) {
+      setMetadataError(
+        metadataSaveError instanceof Error
+          ? metadataSaveError.message
+          : "Не удалось сохранить метаданные изображения."
+      );
+    } finally {
+      setMetadataSaving(false);
     }
   };
 
@@ -451,7 +559,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
             <option value="">Не merged</option>
             {availableMergeTargets.map((candidate) => (
               <option key={candidate.en_id} value={String(candidate.en_id)}>
-                {candidate.name} ({candidate.entity_type}) [{formatCanonicalEntityId(candidate.en_id)}]
+                {getCanonicalEntityDisplayName(candidate)} ({candidate.entity_type}) [{formatCanonicalEntityId(candidate.en_id)}]
               </option>
             ))}
           </select>
@@ -504,6 +612,63 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
                 У этой сущности пока нет изображения.
               </div>
             )}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={handleOpenMetadataDialog}
+              disabled={
+                !currentPicturePath ||
+                imageChanged ||
+                saving ||
+                deleting ||
+                metadataLoading ||
+                metadataSaving
+              }
+              title={
+                imageChanged
+                  ? "Сначала сохраните сущность, чтобы редактировать метаданные новой картинки."
+                  : !currentPicturePath
+                    ? "Метаданные можно редактировать только у сохранённой картинки."
+                    : undefined
+              }
+              style={{
+                padding: "6px 10px",
+                borderRadius: 6,
+                border: "1px solid #777",
+                backgroundColor:
+                  !currentPicturePath ||
+                  imageChanged ||
+                  saving ||
+                  deleting ||
+                  metadataLoading ||
+                  metadataSaving
+                    ? "#f2f2f2"
+                    : "#fff",
+                color:
+                  !currentPicturePath ||
+                  imageChanged ||
+                  saving ||
+                  deleting ||
+                  metadataLoading ||
+                  metadataSaving
+                    ? "#888"
+                    : "#333",
+                cursor:
+                  !currentPicturePath ||
+                  imageChanged ||
+                  saving ||
+                  deleting ||
+                  metadataLoading ||
+                  metadataSaving
+                    ? "default"
+                    : "pointer",
+                fontSize: 12,
+              }}
+            >
+              {metadataLoading ? "Загружаю метаданные…" : "Ред. метаданные"}
+            </button>
           </div>
 
           <div
@@ -664,6 +829,107 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
             </button>
           </div>
         </div>
+
+        {metadataDialogOpen && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 1400,
+              background: "rgba(0,0,0,0.4)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 20,
+            }}
+            onClick={handleCloseMetadataDialog}
+          >
+            <div
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: "min(420px, calc(100vw - 40px))",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                background: "#fff",
+                boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+                padding: "18px 20px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 16 }}>Метаданные изображения</div>
+                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.68 }}>
+                  Укажите автора для текущей сохранённой картинки.
+                </div>
+              </div>
+
+              {metadataError && (
+                <div style={{ fontSize: 12, color: "#b00020", whiteSpace: "pre-wrap" }}>
+                  {metadataError}
+                </div>
+              )}
+
+              <label style={{ fontSize: 12, fontWeight: 600 }}>
+                Автор изображения
+                <input
+                  type="text"
+                  value={metadataAuthorDraft}
+                  disabled={metadataSaving}
+                  autoFocus
+                  onChange={(event) => setMetadataAuthorDraft(event.target.value)}
+                  style={{
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "6px 8px",
+                    fontSize: 13,
+                    borderRadius: 6,
+                    border: "1px solid #ccc",
+                    boxSizing: "border-box",
+                    backgroundColor: metadataSaving ? "#f2f2f2" : "#fff",
+                  }}
+                />
+              </label>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={handleCloseMetadataDialog}
+                  disabled={metadataSaving}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    border: "1px solid #bbb",
+                    backgroundColor: "#f2f2f2",
+                    color: "#333",
+                    cursor: metadataSaving ? "default" : "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveMetadata}
+                  disabled={metadataSaving}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #555",
+                    backgroundColor: metadataSaving ? "#ddd" : "#333",
+                    color: metadataSaving ? "#777" : "#f5f5f5",
+                    cursor: metadataSaving ? "default" : "pointer",
+                    fontSize: 13,
+                    fontWeight: 600,
+                  }}
+                >
+                  {metadataSaving ? "Сохраняю…" : "Сохранить метаданные"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -672,10 +938,15 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
 export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   entities,
   createRequestToken,
+  editEntityId = null,
+  editRequestToken = 0,
   onCreateEntityDraft,
   onClose,
   onChange,
   onDelete,
+  pictureMetaById,
+  onLoadImageMetadata,
+  onUpdateImageMetadata,
   onUploadImage,
 }) => {
   const [search, setSearch] = useState("");
@@ -683,8 +954,26 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   const [statusTone, setStatusTone] = useState<StatusTone>("info");
   const [editorState, setEditorState] = useState<EntityEditorState>(null);
   const handledCreateRequestTokenRef = useRef<number | null>(null);
+  const handledEditRequestTokenRef = useRef<number | null>(null);
 
   const groupedEntities = useMemo(() => buildGroupedEntities(entities, search), [entities, search]);
+
+  const openExistingEntityEditor = (entity: CanonicalEntity) => {
+    const picturePath = getCanonicalEntityPicturePath(entity);
+    if (
+      picturePath &&
+      !Object.prototype.hasOwnProperty.call(pictureMetaById, picturePath)
+    ) {
+      void onLoadImageMetadata([picturePath]).catch((error: unknown) => {
+        console.error("[CanonicalEntityManager] Не удалось предзагрузить метаданные картинки", error);
+      });
+    }
+
+    setEditorState({
+      entity,
+      isNew: false,
+    });
+  };
 
   useEffect(() => {
     if (createRequestToken <= 0 || handledCreateRequestTokenRef.current === createRequestToken) return;
@@ -699,6 +988,27 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
     });
   }, [createRequestToken, onCreateEntityDraft]);
 
+  useEffect(() => {
+    if (editRequestToken <= 0 || handledEditRequestTokenRef.current === editRequestToken) return;
+    if (editEntityId === null) {
+      handledEditRequestTokenRef.current = editRequestToken;
+      return;
+    }
+
+    const entityToEdit =
+      entities.find((entity) => entity.en_id === editEntityId) ?? null;
+    if (!entityToEdit) return;
+
+    handledEditRequestTokenRef.current = editRequestToken;
+    openExistingEntityEditor(entityToEdit);
+  }, [
+    editEntityId,
+    editRequestToken,
+    entities,
+    onLoadImageMetadata,
+    pictureMetaById,
+  ]);
+
   const openCreateEntityEditor = () => {
     const nextEntityDraft = onCreateEntityDraft();
     if (!nextEntityDraft) return;
@@ -706,13 +1016,6 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
     setEditorState({
       entity: nextEntityDraft,
       isNew: true,
-    });
-  };
-
-  const openExistingEntityEditor = (entity: CanonicalEntity) => {
-    setEditorState({
-      entity,
-      isNew: false,
     });
   };
 
@@ -762,6 +1065,24 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   const handleClose = () => {
     onClose({ shouldRefreshNodes: false });
   };
+
+  const handleImageMetadataUpdate = async (
+    pictureId: string,
+    metadata: PictureMeta | null
+  ): Promise<PictureMeta | null> => {
+    const updatedMetadata = await onUpdateImageMetadata(pictureId, metadata);
+    setStatusTone("success");
+    setStatusMessage(
+      updatedMetadata?.author
+        ? "Автор изображения сохранён."
+        : "Метаданные изображения очищены."
+    );
+    return updatedMetadata;
+  };
+
+  const editorPicturePath = editorState
+    ? getCanonicalEntityPicturePath(editorState.entity)
+    : null;
 
   return (
     <>
@@ -1025,6 +1346,11 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
               ? null
               : () => handleDeleteEntity(editorState.entity.en_id)
           }
+          currentPictureMetadata={
+            editorPicturePath ? pictureMetaById[editorPicturePath] : undefined
+          }
+          onLoadImageMetadata={onLoadImageMetadata}
+          onUpdateImageMetadata={handleImageMetadataUpdate}
           onUploadImage={onUploadImage}
         />
       )}

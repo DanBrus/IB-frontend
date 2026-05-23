@@ -6,6 +6,7 @@ import {
   truncateSheetSourceLabel,
 } from "../boardDescription";
 import type { BoardNode } from "../boardTypes";
+import { FILE_RES_BASE_URL, type PictureMeta } from "../fileDataSource";
 import "./NodeCard.css";
 import { clampReadPanelWidth, DESKTOP_READ_PANEL_DEFAULT_WIDTH } from "./panelSizing";
 
@@ -18,6 +19,7 @@ type DesktopResizeState = {
 
 interface NodeReadPanelProps {
   node: BoardNode | null;
+  pictureMeta?: PictureMeta | null;
   descriptionSheets: BoardDescriptionSheet[];
   onClose: () => void;
   mobile?: boolean;
@@ -31,6 +33,7 @@ const MOBILE_DRAG_EXPAND_THRESHOLD = 72;
 
 export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
   node,
+  pictureMeta = null,
   descriptionSheets,
   onClose,
   mobile = false,
@@ -184,6 +187,66 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
     const baseOffset = sheetState === "half" ? "50%" : "0%";
     return `translateY(calc(${baseOffset} + ${clampedOffsetY}px))`;
   }, [dragOffsetY, sheetState]);
+
+  const imageUrl = useMemo(() => {
+    const picturePath = typeof node?.picture_path === "string" ? node.picture_path.trim() : "";
+    return picturePath ? `${FILE_RES_BASE_URL}/res/${picturePath}` : null;
+  }, [node?.picture_path]);
+
+  const pictureAuthor = useMemo(() => {
+    const author = typeof pictureMeta?.author === "string" ? pictureMeta.author.trim() : "";
+    return author || null;
+  }, [pictureMeta]);
+
+  const imageContent = imageUrl ? (
+    <div
+      style={{
+        flexShrink: 0,
+        padding: mobile ? "14px 14px 0" : "2px 0 0",
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          aspectRatio: "1 / 1",
+          borderRadius: 16,
+          overflow: "hidden",
+          backgroundColor: "#111",
+          border: "1px solid #ddd",
+        }}
+      >
+        <img
+          src={imageUrl}
+          alt=""
+          draggable={false}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block",
+          }}
+        />
+        {pictureAuthor && (
+          <div
+            style={{
+              position: "absolute",
+              right: 10,
+              bottom: 10,
+              padding: "4px 8px",
+              borderRadius: 999,
+              background: "rgba(0, 0, 0, 0.45)",
+              color: "#d0d0d0",
+              fontSize: 11,
+              lineHeight: 1.2,
+            }}
+          >
+            Автор: {pictureAuthor}
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null;
 
   const descriptionContent = (
     <div
@@ -339,6 +402,8 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
             </div>
           </div>
 
+          {imageContent}
+
           <div style={{ flexGrow: 1, minHeight: 0, overflowY: "auto" }}>{descriptionContent}</div>
         </aside>
       </div>
@@ -432,6 +497,8 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
           </button>
         </div>
       </div>
+
+      {imageContent}
 
       <div style={{ flexGrow: 1, minHeight: 0, overflowY: "auto" }}>{descriptionContent}</div>
     </aside>

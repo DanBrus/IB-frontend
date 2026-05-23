@@ -46,6 +46,7 @@ interface NodeInspectorProps {
       descriptionSheets: EditableBoardDescriptionSheet[];
     }
   ) => Promise<void>;
+  onOpenCanonicalEntityEditor: (entityId: number) => void;
 }
 
 function normalizeSearchValue(value: string): string {
@@ -74,6 +75,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   descriptionSheets,
   connectedNodes,
   onSaveNode,
+  onOpenCanonicalEntityEditor,
 }) => {
   const [selectedCanonicalEntityId, setSelectedCanonicalEntityId] = useState<number | null>(null);
   const [canonicalEntityFilter, setCanonicalEntityFilter] = useState("");
@@ -679,6 +681,25 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
                   </div>
                 </div>
               )}
+
+              <button
+                type="button"
+                onClick={() => onOpenCanonicalEntityEditor(selectedCanonicalEntity.en_id)}
+                disabled={saving}
+                style={{
+                  alignSelf: "flex-start",
+                  padding: "7px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #777",
+                  backgroundColor: saving ? "#f2f2f2" : "#fff",
+                  color: saving ? "#888" : "#333",
+                  cursor: saving ? "default" : "pointer",
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                Перейти к сущности
+              </button>
             </>
           ) : (
             <div style={{ fontSize: 12, color: "#666", lineHeight: 1.45 }}>
