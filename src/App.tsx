@@ -15,6 +15,10 @@ import type {
 } from "./boardDataSource";
 import { boardDataSource } from "./boardDataSource";
 import { authClient } from "./auth/authClient";
+import {
+  applyCanonicalEntityPicturesToNodes,
+  resolveCanonicalEntityRootId,
+} from "./canonicalEntities";
 import { getNodeCardEntitySizes } from "./nodeCardMetrics";
 
 const AUTH_REJECTED_MESSAGE = "Токен безопасности истёк или был введён неверный код безопасности.";
@@ -36,6 +40,10 @@ type AnalysisBoardInfo = {
 };
 
 type VersionFallbackStrategy = "min" | "max";
+type LoadBoardSnapshotOptions = {
+  fallbackStrategy?: VersionFallbackStrategy;
+  canonicalEntities?: CanonicalEntity[];
+};
 
 function getRegularBoardTitle(boardName?: string | null): string {
   const normalizedBoardName = typeof boardName === "string" ? boardName.trim() : "";
@@ -83,11 +91,15 @@ async function loadBoardSnapshot(
   boardId: string,
   accessMode: BoardAccessMode,
   requestedVersion: number | null | undefined,
-  fallbackStrategy: VersionFallbackStrategy = "max"
+  options: LoadBoardSnapshotOptions = {}
 ): Promise<BoardSnapshot> {
+  const fallbackStrategy = options.fallbackStrategy ?? "max";
+  const hasCachedCanonicalEntities = options.canonicalEntities !== undefined;
   const [versionsList, canonicalEntitiesList] = await Promise.all([
     boardDataSource.getVersions(boardId),
-    boardDataSource.getCanonicalEntities(boardId),
+    hasCachedCanonicalEntities
+      ? Promise.resolve(options.canonicalEntities ?? [])
+      : boardDataSource.getCanonicalEntities(boardId),
   ]);
 
   const resolvedVersion = resolveCurrentVersion(
@@ -111,7 +123,7 @@ async function loadBoardSnapshot(
   const graph = await boardDataSource.getCurrentBoard(boardId, resolvedVersion);
 
   return {
-    nodes: graph.nodes,
+    nodes: applyCanonicalEntityPicturesToNodes(graph.nodes, canonicalEntitiesList),
     edges: graph.edges,
     versions: versionsList,
     canonicalEntities: canonicalEntitiesList,
@@ -160,7 +172,9 @@ export default function App() {
 
     (async () => {
       try {
-        const snapshot = await loadBoardSnapshot(BOARD_ID, "read", null, "min");
+        const snapshot = await loadBoardSnapshot(BOARD_ID, "read", null, {
+          fallbackStrategy: "min",
+        });
         if (cancelled) return;
         applyBoardSnapshot(snapshot);
         setLoading(false);
@@ -186,7 +200,7 @@ export default function App() {
 
     try {
       const graph = await boardDataSource.getCurrentBoard(BOARD_ID, nextVersion);
-      setNodes(graph.nodes);
+      setNodes(applyCanonicalEntityPicturesToNodes(graph.nodes, canonicalEntities));
       setEdges(graph.edges);
       setCurrentVersion(nextVersion);
       setBoardViewMode("standard");
@@ -201,21 +215,22 @@ export default function App() {
   };
 
   const handleOpenCanonicalEntityAnalysis = async (ceId: number) => {
-    if (boardViewMode === "analysis" && analysisCeId === ceId) return;
+    const rootCeId = resolveCanonicalEntityRootId(ceId, canonicalEntities) ?? ceId;
+    if (boardViewMode === "analysis" && analysisCeId === rootCeId) return;
 
     setLoading(true);
 
     try {
       const entitySizes = await getNodeCardEntitySizes();
       const graph = await boardDataSource.getCanonicalEntityAnalysis(BOARD_ID, {
-        ceId,
+        ceId: rootCeId,
         entitySizes,
       });
 
-      setNodes(graph.nodes);
+      setNodes(applyCanonicalEntityPicturesToNodes(graph.nodes, canonicalEntities));
       setEdges(graph.edges);
       setBoardViewMode("analysis");
-      setAnalysisCeId(ceId);
+      setAnalysisCeId(rootCeId);
       setAnalysisBoardInfo({
         version: graph.version ?? 0,
         name: graph.board_name ?? null,
@@ -248,7 +263,9 @@ export default function App() {
 
     try {
       await boardDataSource.createVersion(payload);
-      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, payload.version);
+      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, payload.version, {
+        canonicalEntities,
+      });
       applyBoardSnapshot(snapshot);
       setLoading(false);
     } catch {
@@ -273,7 +290,11 @@ export default function App() {
   const handleCanonicalEntityDelete = async (
     entityId: number
   ): Promise<CanonicalEntityDeleteResult> => {
-    const deleteResult = await boardDataSource.deleteCanonicalEntity(BOARD_ID, entityId);
+    const deleteResult = await boardDataSource.deleteCanonicalEntity(
+      BOARD_ID,
+      entityId,
+      canonicalEntities
+    );
 
     if (deleteResult.outcome === "deleted") {
       const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, currentVersion);
@@ -293,7 +314,8 @@ export default function App() {
       const snapshot = await loadBoardSnapshot(
         BOARD_ID,
         accessMode,
-        currentVersion === version ? null : currentVersion
+        currentVersion === version ? null : currentVersion,
+        { canonicalEntities }
       );
       applyBoardSnapshot(snapshot);
     } catch (e: unknown) {
@@ -323,7 +345,9 @@ export default function App() {
         is_published: payload.is_published,
       });
 
-      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, payload.version);
+      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, payload.version, {
+        canonicalEntities,
+      });
       applyBoardSnapshot(snapshot);
     } catch (e: unknown) {
       const message =

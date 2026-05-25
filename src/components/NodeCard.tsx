@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import type { BoardNode } from "../boardTypes";
 import { getDescriptionPreviewText } from "../boardDescription";
 import { getNodeCardLayout } from "../cardLayout";
+import { getPrimaryNodePicturePath } from "../canonicalEntities";
 import { FILE_RES_BASE_URL } from "../fileDataSource";
 import "./NodeCard.css";
 
@@ -36,8 +37,8 @@ export const NodeCard: React.FC<NodeCardProps> = ({
 
   const imgSrc = useMemo(() => {
     if (!layout.hasImage) return null;
-    if (!node.picture_path) return null;
-    return `${FILE_RES_BASE_URL}/res/${node.picture_path}`;
+    const picturePath = getPrimaryNodePicturePath(node.picture_path);
+    return picturePath ? `${FILE_RES_BASE_URL}/res/${picturePath}` : null;
   }, [layout.hasImage, node.picture_path]);
 
   const inlineDescription = useMemo(
@@ -50,7 +51,7 @@ export const NodeCard: React.FC<NodeCardProps> = ({
   }, [node.picture_path]);
 
   useEffect(() => {
-    if (!layout.hasImage && node.picture_path) {
+    if (!layout.hasImage && getPrimaryNodePicturePath(node.picture_path)) {
       console.warn("[NodeCard] Картинка игнорируется для note-ноды", {
         node_id: node.node_id,
         picture_path: node.picture_path,

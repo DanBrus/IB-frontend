@@ -14,6 +14,7 @@ import {
 import { authClient } from "./auth/authClient";
 import { sortChunks } from "./boardDescription";
 import type { EntitySizeMap } from "./nodeCardMetrics";
+import { getPrimaryNodePicturePath } from "./canonicalEntities";
 
 export type BoardGraph = {
   nodes: BoardNode[];
@@ -66,7 +67,8 @@ export interface BoardDataSource {
   ): Promise<CanonicalEntitiesSyncResult>;
   deleteCanonicalEntity(
     boardId: string,
-    entityId: number
+    entityId: number,
+    currentEntities: CanonicalEntity[]
   ): Promise<CanonicalEntityDeleteResult>;
 }
 
@@ -97,6 +99,17 @@ function normalizePicturePath(picturePath: unknown): string | null {
   if (!value || value.toLowerCase() === "none" || value.toLowerCase() === "null") return null;
 
   return value;
+}
+
+function normalizeNodePicturePaths(rawValue: unknown): string[] {
+  if (Array.isArray(rawValue)) {
+    return rawValue
+      .map((item) => normalizePicturePath(item))
+      .filter((item): item is string => item !== null);
+  }
+
+  const singlePicturePath = normalizePicturePath(rawValue);
+  return singlePicturePath ? [singlePicturePath] : [];
 }
 
 function normalizePublishedFlag(value: unknown): boolean | null {
@@ -206,7 +219,7 @@ function normalizeNode(rawNode: unknown): BoardNode | null {
     pos_x: rawPosX,
     pos_y: rawPosY,
     node_type: normalizeNodeType(getRawNodeType(node)),
-    picture_path: normalizePicturePath(node.picture_path),
+    picture_path: normalizeNodePicturePaths(node.picture_path),
     description: normalizeChunks(node.description),
   };
 }
@@ -679,7 +692,7 @@ class HttpBoardDataSource implements BoardDataSource {
             pos_x: node.pos_x,
             pos_y: node.pos_y,
             node_type: node.node_type,
-            picture_path: node.picture_path ?? null,
+            picture_path: getPrimaryNodePicturePath(node.picture_path),
             description: node.description,
           })),
           edges: payload.edges.map((edge) => ({
@@ -748,7 +761,8 @@ class HttpBoardDataSource implements BoardDataSource {
 
   async deleteCanonicalEntity(
     boardId: string,
-    entityId: number
+    entityId: number,
+    currentEntities: CanonicalEntity[]
   ): Promise<CanonicalEntityDeleteResult> {
     console.log("[BoardDataSource] Удаляем canonical-entity", {
       boardId,
@@ -756,7 +770,6 @@ class HttpBoardDataSource implements BoardDataSource {
     });
 
     try {
-      const currentEntities = await this.getCanonicalEntities(boardId);
       const nextEntities = currentEntities.filter((entity) => entity.en_id !== entityId);
 
       if (nextEntities.length === currentEntities.length) {

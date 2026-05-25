@@ -3,8 +3,10 @@ import { InvestigationBoard } from "./InvestigationBoard";
 import type { EditableBoardDescriptionSheet } from "./boardDescription";
 import { buildDescriptionAssignments } from "./boardDescription";
 import {
+  applyCanonicalEntityPicturesToNodes,
   createEmptyCanonicalEntity,
-  getCanonicalEntityPicturePath,
+  getCanonicalEntityPicturePathChain,
+  getPrimaryNodePicturePath,
   sortCanonicalEntities,
 } from "./canonicalEntities";
 import type {
@@ -86,7 +88,9 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   onRequestEditMode,
   onOpenCanonicalEntityAnalysis,
 }) => {
-  const [nodes, setNodes] = useState<BoardNode[]>(initialNodes);
+  const [nodes, setNodes] = useState<BoardNode[]>(() =>
+    applyCanonicalEntityPicturesToNodes(initialNodes, initialCanonicalEntities)
+  );
   const [edges, setEdges] = useState<BoardEdge[]>(initialEdges);
   const [canonicalEntities, setCanonicalEntities] = useState<CanonicalEntity[]>(() =>
     sortCanonicalEntities(initialCanonicalEntities)
@@ -125,8 +129,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
     const map = new Map<string, number[]>();
 
     nodes.forEach((node) => {
-      const pictureId =
-        typeof node.picture_path === "string" ? node.picture_path.trim() : "";
+      const pictureId = getPrimaryNodePicturePath(node.picture_path);
       if (!pictureId) return;
 
       const nodeIds = map.get(pictureId);
@@ -152,17 +155,21 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   }, [currentVersion, initialIsPublished]);
 
   useEffect(() => {
-    setNodes(initialNodes);
+    setNodes(applyCanonicalEntityPicturesToNodes(initialNodes, initialCanonicalEntities));
     setEdges(initialEdges);
     setMode("idle");
     setEdgeActionFirstNodeId(null);
     setSelectedNodeId(null);
     setDraftNode(null);
-  }, [currentVersion, initialEdges, initialNodes]);
+  }, [currentVersion, initialCanonicalEntities, initialEdges, initialNodes]);
 
   useEffect(() => {
     setCanonicalEntities(sortCanonicalEntities(initialCanonicalEntities));
   }, [initialCanonicalEntities]);
+
+  useEffect(() => {
+    setNodes((prevNodes) => applyCanonicalEntityPicturesToNodes(prevNodes, canonicalEntities));
+  }, [canonicalEntities]);
 
   useEffect(() => {
     let cancelled = false;
@@ -337,7 +344,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       pos_y: y,
       node_type: BOARD_NODE_TYPES[0],
       description: [],
-      picture_path: null,
+      picture_path: [],
     });
     setSelectedNodeId(null);
     setMode("edit-node");
@@ -451,7 +458,10 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
       ce_id: canonicalEntity.en_id,
       name: canonicalEntity.name,
       node_type: canonicalEntity.entity_type,
-      picture_path: getCanonicalEntityPicturePath(canonicalEntity),
+      picture_path: getCanonicalEntityPicturePathChain(
+        canonicalEntity.en_id,
+        canonicalEntities
+      ),
       description: nodeChunks,
     };
 

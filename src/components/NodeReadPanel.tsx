@@ -5,6 +5,7 @@ import {
   getSheetSourceLabel,
   truncateSheetSourceLabel,
 } from "../boardDescription";
+import { getPrimaryNodePicturePath } from "../canonicalEntities";
 import type { BoardNode } from "../boardTypes";
 import { FILE_RES_BASE_URL, type PictureMeta } from "../fileDataSource";
 import "./NodeCard.css";
@@ -189,7 +190,7 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
   }, [dragOffsetY, sheetState]);
 
   const imageUrl = useMemo(() => {
-    const picturePath = typeof node?.picture_path === "string" ? node.picture_path.trim() : "";
+    const picturePath = getPrimaryNodePicturePath(node?.picture_path);
     return picturePath ? `${FILE_RES_BASE_URL}/res/${picturePath}` : null;
   }, [node?.picture_path]);
 

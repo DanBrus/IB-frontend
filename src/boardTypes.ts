@@ -56,7 +56,7 @@ export type BoardNode = {
   pos_y: number;
   node_type: BoardNodeType;
   description: BoardChunk[];
-  picture_path?: string | null;
+  picture_path?: string[];
 };
 
 export type BoardEdge = {
