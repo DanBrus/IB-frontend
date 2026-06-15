@@ -29,6 +29,7 @@ interface CanonicalEntityManagerProps {
   onClose: (options?: { shouldRefreshNodes: boolean }) => void;
   onChange: (entities: CanonicalEntity[]) => Promise<CanonicalEntitiesSyncResult>;
   onDelete: (entityId: number) => Promise<CanonicalEntityDeleteResult>;
+  onConfirmUnsavedBoardLoss: () => Promise<boolean>;
   pictureMetaById: Record<string, PictureMeta | null>;
   onLoadImageMetadata: (
     pictureIds: string[]
@@ -47,6 +48,7 @@ interface CanonicalEntityEditorDialogProps {
   onClose: () => void;
   onSave: (nextEntity: CanonicalEntity, previousEntityId: number | null) => Promise<void>;
   onDelete?: (() => Promise<CanonicalEntityDeleteResult>) | null;
+  onConfirmUnsavedBoardLoss: () => Promise<boolean>;
   currentPictureMetadata?: PictureMeta | null;
   onLoadImageMetadata: (
     pictureIds: string[]
@@ -160,6 +162,7 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
   onClose,
   onSave,
   onDelete,
+  onConfirmUnsavedBoardLoss,
   currentPictureMetadata,
   onLoadImageMetadata,
   onUpdateImageMetadata,
@@ -416,6 +419,9 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
       return;
     }
 
+    const confirmed = await onConfirmUnsavedBoardLoss();
+    if (!confirmed) return;
+
     setSaving(true);
     setError(null);
 
@@ -450,6 +456,9 @@ const CanonicalEntityEditorDialog: React.FC<CanonicalEntityEditorDialogProps> = 
       `Удалить canonical entity "${entity.name || formatCanonicalEntityId(entity.en_id)}"?`
     );
     if (!confirmed) return;
+
+    const canContinue = await onConfirmUnsavedBoardLoss();
+    if (!canContinue) return;
 
     setDeleting(true);
     setError(null);
@@ -1033,6 +1042,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   onClose,
   onChange,
   onDelete,
+  onConfirmUnsavedBoardLoss,
   pictureMetaById,
   onLoadImageMetadata,
   onUpdateImageMetadata,
@@ -1042,6 +1052,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<StatusTone>("info");
   const [editorState, setEditorState] = useState<EntityEditorState>(null);
+  const [shouldRefreshNodesOnClose, setShouldRefreshNodesOnClose] = useState(false);
   const handledCreateRequestTokenRef = useRef<number | null>(null);
   const handledEditRequestTokenRef = useRef<number | null>(null);
 
@@ -1125,8 +1136,11 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
           : "Canonical entity сохранена на сервере. Данные перечитаны."
         : previousEntityId === null
           ? "Новая сущность добавлена локально. Серверный sync пока работает в placeholder-режиме."
-          : "Изменения сущности сохранены локально. Серверный sync пока работает в placeholder-режиме."
+        : "Изменения сущности сохранены локально. Серверный sync пока работает в placeholder-режиме."
     );
+    if (syncResult.persisted) {
+      setShouldRefreshNodesOnClose(true);
+    }
     setEditorState(null);
   };
 
@@ -1138,6 +1152,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
     if (deleteResult.outcome === "deleted") {
       setStatusTone("success");
       setStatusMessage("Canonical entity удалена.");
+      setShouldRefreshNodesOnClose(true);
       setEditorState(null);
     }
 
@@ -1152,7 +1167,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
   };
 
   const handleClose = () => {
-    onClose({ shouldRefreshNodes: false });
+    onClose({ shouldRefreshNodes: shouldRefreshNodesOnClose });
   };
 
   const handleImageMetadataUpdate = async (
@@ -1435,6 +1450,7 @@ export const CanonicalEntityManager: React.FC<CanonicalEntityManagerProps> = ({
               ? null
               : () => handleDeleteEntity(editorState.entity.en_id)
           }
+          onConfirmUnsavedBoardLoss={onConfirmUnsavedBoardLoss}
           currentPictureMetadata={
             editorPicturePath ? pictureMetaById[editorPicturePath] : undefined
           }

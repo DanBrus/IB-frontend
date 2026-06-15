@@ -757,6 +757,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
                       onDoubleClick={() => handleOpenExistingSheet(sheet.id)}
                       onKeyDown={(event) => handleSheetCardKeyDown(event, sheet.id)}
                     >
+                      {sheet.timecode ? (
+                        <div className="paper-note__timecode">{sheet.timecode}</div>
+                      ) : null}
                       <div
                         className={`paper-note__text${
                           sheet.description ? "" : " paper-note__text--empty"

@@ -285,6 +285,9 @@ export const NodeReadPanel: React.FC<NodeReadPanelProps> = ({
                 </div>
               </div>
               <div className="paper-note__body">
+                {sheet.timecode ? (
+                  <div className="paper-note__timecode">{sheet.timecode}</div>
+                ) : null}
                 <div className="paper-note__text">{sheet.description}</div>
               </div>
             </article>

@@ -151,6 +151,7 @@ export default function App() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [saveBannerVisible, setSaveBannerVisible] = useState(false);
 
   const applyBoardSnapshot = (snapshot: BoardSnapshot) => {
     setNodes(snapshot.nodes);
@@ -279,8 +280,8 @@ export default function App() {
   ): Promise<CanonicalEntitiesSyncResult> => {
     const syncResult = await boardDataSource.updateCanonicalEntities(BOARD_ID, nextEntities);
     if (syncResult.persisted) {
-      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, currentVersion);
-      applyBoardSnapshot(snapshot);
+      const refreshedCanonicalEntities = await boardDataSource.getCanonicalEntities(BOARD_ID);
+      setCanonicalEntities(refreshedCanonicalEntities);
     } else {
       setCanonicalEntities(nextEntities);
     }
@@ -297,11 +298,29 @@ export default function App() {
     );
 
     if (deleteResult.outcome === "deleted") {
-      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, currentVersion);
-      applyBoardSnapshot(snapshot);
+      const refreshedCanonicalEntities = await boardDataSource.getCanonicalEntities(BOARD_ID);
+      setCanonicalEntities(refreshedCanonicalEntities);
     }
 
     return deleteResult;
+  };
+
+  const handleCanonicalEntitiesManagerClose = async (shouldRefreshNodes: boolean) => {
+    if (!shouldRefreshNodes) return;
+
+    setSaveBannerVisible(true);
+    try {
+      const snapshot = await loadBoardSnapshot(BOARD_ID, accessMode, currentVersion);
+      applyBoardSnapshot(snapshot);
+    } catch (closeError: unknown) {
+      window.alert(
+        closeError instanceof Error
+          ? closeError.message
+          : "Не удалось обновить доску после изменения списка сущностей."
+      );
+    } finally {
+      setSaveBannerVisible(false);
+    }
   };
 
   const handleDeleteVersion = async (version: number) => {
@@ -335,6 +354,7 @@ export default function App() {
       throw new Error("Режим редактирования недоступен.");
     }
 
+    setSaveBannerVisible(true);
     try {
       await boardDataSource.updateBoard({
         version: payload.version,
@@ -354,6 +374,8 @@ export default function App() {
         e instanceof Error ? e.message : "Не удалось сохранить текущую версию.";
       console.error(message);
       throw new Error(message);
+    } finally {
+      setSaveBannerVisible(false);
     }
   };
 
@@ -463,9 +485,33 @@ export default function App() {
         onPersistBoard={handlePersistBoard}
         onCanonicalEntitiesChange={handleCanonicalEntitiesChange}
         onCanonicalEntityDelete={handleCanonicalEntityDelete}
+        onCanonicalEntitiesManagerClose={handleCanonicalEntitiesManagerClose}
         onRequestEditMode={handleRequestEditMode}
         onOpenCanonicalEntityAnalysis={handleOpenCanonicalEntityAnalysis}
       />
+
+      {saveBannerVisible && (
+        <div
+          style={{
+            position: "fixed",
+            top: 16,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 1500,
+            padding: "10px 16px",
+            borderRadius: 10,
+            background: "rgba(33, 33, 33, 0.92)",
+            color: "#f5f5f5",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.24)",
+            fontSize: 13,
+            fontWeight: 600,
+            letterSpacing: "0.02em",
+            userSelect: "none",
+          }}
+        >
+          Сохранение
+        </div>
+      )}
 
       {authDialogOpen && (
         <div

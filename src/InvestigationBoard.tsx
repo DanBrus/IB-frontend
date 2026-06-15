@@ -52,7 +52,8 @@ interface InvestigationBoardProps {
   onDeleteVersion: (version: number) => Promise<void>;
   onRequestEditMode: () => void;
 
-  onPublish: () => void;
+  onPublish: () => Promise<void>;
+  onConfirmUnsavedBoardLoss: () => Promise<boolean>;
   onCurrentVersionPublishedChange: (value: boolean) => void;
 
   onNodeAddClick: () => void;
@@ -113,6 +114,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
   onDeleteVersion,
   onRequestEditMode,
   onPublish,
+  onConfirmUnsavedBoardLoss,
   onCurrentVersionPublishedChange,
   onNodeAddClick,
   onNodeDeleteClick,
@@ -174,6 +176,9 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
       return;
     }
 
+    const confirmed = await onConfirmUnsavedBoardLoss();
+    if (!confirmed) return;
+
     setNewVersionError(null);
     setNewVersionSaving(true);
     try {
@@ -211,6 +216,9 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
       `Вы уверены, что хотите удалить версию "${formatBoardVersion(parsedVersion)}"?\nДействие необратимо.`
     );
     if (!confirmed) return;
+
+    const canContinue = await onConfirmUnsavedBoardLoss();
+    if (!canContinue) return;
 
     setDeleteVersionError(null);
     setDeleteVersionSaving(true);
@@ -273,7 +281,13 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
         accessMode={accessMode}
         boardViewMode={boardViewMode}
         analysisBoardInfo={analysisBoardInfo}
-        onVersionChange={onVersionChange}
+        onVersionChange={(version) => {
+          void (async () => {
+            const confirmed = await onConfirmUnsavedBoardLoss();
+            if (!confirmed) return;
+            onVersionChange(version);
+          })();
+        }}
         onPublish={onPublish}
         onRequestEditMode={onRequestEditMode}
         onCanonicalEntitiesClick={
@@ -328,6 +342,7 @@ export const InvestigationBoard: React.FC<InvestigationBoardProps> = ({
           onClose={closeCanonicalEntitiesDialog}
           onChange={onCanonicalEntitiesChange}
           onDelete={onCanonicalEntityDelete}
+          onConfirmUnsavedBoardLoss={onConfirmUnsavedBoardLoss}
           pictureMetaById={pictureMetaById}
           onLoadImageMetadata={onLoadImageMetadata}
           onUpdateImageMetadata={onUpdateImageMetadata}

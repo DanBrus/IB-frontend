@@ -303,6 +303,14 @@
   white-space: pre-wrap;
 }
 
+.paper-note__timecode {
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  color: #8b8b8b;
+  white-space: pre-wrap;
+}
+
 .paper-note__text--empty {
   color: #8d7d68;
   font-style: italic;

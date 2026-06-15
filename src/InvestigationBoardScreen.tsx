@@ -64,8 +64,45 @@ interface InvestigationBoardScreenProps {
   onCanonicalEntityDelete: (
     entityId: number
   ) => Promise<CanonicalEntityDeleteResult>;
+  onCanonicalEntitiesManagerClose: (shouldRefreshNodes: boolean) => Promise<void>;
   onRequestEditMode: () => void;
   onOpenCanonicalEntityAnalysis: (ceId: number) => Promise<void>;
+}
+
+type UnsavedBoardDialogState = {
+  resolve: (choice: "save" | "discard" | "cancel") => void;
+} | null;
+
+function serializeEditableBoardState(nodes: BoardNode[], edges: BoardEdge[]): string {
+  return JSON.stringify({
+    nodes: [...nodes]
+      .sort((left, right) => left.node_id - right.node_id)
+      .map((node) => ({
+        node_id: node.node_id,
+        ce_id: node.ce_id,
+        pos_x: node.pos_x,
+        pos_y: node.pos_y,
+        description: node.description.map((chunk) => ({
+          c_id: chunk.c_id,
+          description: chunk.description,
+          chunk_priority: chunk.chunk_priority,
+          timecode: chunk.timecode,
+        })),
+      })),
+    edges: [...edges]
+      .sort((left, right) => left.edge_id - right.edge_id)
+      .map((edge) => ({
+        edge_id: edge.edge_id,
+        node1: edge.node1,
+        node2: edge.node2,
+        description: edge.description.map((chunk) => ({
+          c_id: chunk.c_id,
+          description: chunk.description,
+          chunk_priority: chunk.chunk_priority,
+          timecode: chunk.timecode,
+        })),
+      })),
+  });
 }
 
 export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> = ({
@@ -85,6 +122,7 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   onPersistBoard,
   onCanonicalEntitiesChange,
   onCanonicalEntityDelete,
+  onCanonicalEntitiesManagerClose,
   onRequestEditMode,
   onOpenCanonicalEntityAnalysis,
 }) => {
@@ -111,7 +149,15 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   const [nodePictureMetaByNodeId, setNodePictureMetaByNodeId] = useState<
     Record<number, PictureMeta | null>
   >({});
+  const [isBoardDirty, setIsBoardDirty] = useState(false);
+  const [unsavedBoardDialog, setUnsavedBoardDialog] = useState<UnsavedBoardDialogState>(null);
   const freeIdsRef = useRef<FreeIds | null>(null);
+  const boardStateBaselineRef = useRef(
+    serializeEditableBoardState(
+      applyCanonicalEntityPicturesToNodes(initialNodes, initialCanonicalEntities),
+      initialEdges
+    )
+  );
 
   const nodesById = useMemo(() => {
     const map = new Map<number, BoardNode>();
@@ -149,18 +195,22 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
     [pictureNodeIdsMap]
   );
   const pictureIdsKey = pictureIds.join("|");
+  const isEditMode = accessMode === "edit";
 
   useEffect(() => {
     setIsPublished(Boolean(initialIsPublished));
   }, [currentVersion, initialIsPublished]);
 
   useEffect(() => {
-    setNodes(applyCanonicalEntityPicturesToNodes(initialNodes, initialCanonicalEntities));
+    const nextNodes = applyCanonicalEntityPicturesToNodes(initialNodes, initialCanonicalEntities);
+    setNodes(nextNodes);
     setEdges(initialEdges);
     setMode("idle");
     setEdgeActionFirstNodeId(null);
     setSelectedNodeId(null);
     setDraftNode(null);
+    boardStateBaselineRef.current = serializeEditableBoardState(nextNodes, initialEdges);
+    setIsBoardDirty(false);
   }, [currentVersion, initialCanonicalEntities, initialEdges, initialNodes]);
 
   useEffect(() => {
@@ -170,6 +220,17 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
   useEffect(() => {
     setNodes((prevNodes) => applyCanonicalEntityPicturesToNodes(prevNodes, canonicalEntities));
   }, [canonicalEntities]);
+
+  useEffect(() => {
+    if (!isEditMode) {
+      setIsBoardDirty(false);
+      return;
+    }
+
+    setIsBoardDirty(
+      serializeEditableBoardState(nodes, edges) !== boardStateBaselineRef.current
+    );
+  }, [edges, isEditMode, nodes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -215,7 +276,43 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
     setNodePictureMetaByNodeId(nextNodePictureMetaByNodeId);
   }, [pictureMetaById, pictureNodeIdsMap]);
 
-  const isEditMode = accessMode === "edit";
+  const persistCurrentBoard = async (): Promise<boolean> => {
+    if (!isEditMode || isPublishing) return false;
+
+    setIsPublishing(true);
+    try {
+      await onPersistBoard({
+        version: currentVersion,
+        nodes,
+        edges,
+        is_published: isPublished,
+      });
+      setIsBoardDirty(false);
+      return true;
+    } catch (e: unknown) {
+      window.alert(
+        e instanceof Error ? e.message : "Не удалось сохранить текущую версию."
+      );
+      return false;
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
+  const requestUnsavedBoardChoice = (): Promise<"save" | "discard" | "cancel"> =>
+    new Promise((resolve) => {
+      setUnsavedBoardDialog({ resolve });
+    });
+
+  const confirmUnsavedBoardLoss = async (): Promise<boolean> => {
+    if (!isEditMode || !isBoardDirty) return true;
+
+    const choice = await requestUnsavedBoardChoice();
+    if (choice === "cancel") return false;
+    if (choice === "discard") return true;
+
+    return persistCurrentBoard();
+  };
 
   useEffect(() => {
     if (!isEditMode) {
@@ -568,70 +665,155 @@ export const InvestigationBoardScreen: React.FC<InvestigationBoardScreenProps> =
     return onCanonicalEntityDelete(entityId);
   };
 
-  const handleCanonicalEntitiesDialogClose = async () => undefined;
+  const handleCanonicalEntitiesDialogClose = async (shouldRefreshNodes: boolean) => {
+    if (!shouldRefreshNodes) return;
+    await onCanonicalEntitiesManagerClose(true);
+  };
 
   const handleVersionChange = (version: number) => onChangeVersion(version);
 
   const handlePublish = async () => {
-    if (!isEditMode || isPublishing) return;
-
-    setIsPublishing(true);
-    try {
-      await onPersistBoard({
-        version: currentVersion,
-        nodes,
-        edges,
-        is_published: isPublished,
-      });
-    } catch (e: unknown) {
-      window.alert(
-        e instanceof Error ? e.message : "Не удалось сохранить текущую версию."
-      );
-    } finally {
-      setIsPublishing(false);
-    }
+    await persistCurrentBoard();
   };
 
   return (
-    <InvestigationBoard
-      title={title}
-      nodes={nodes}
-      edges={edges}
-      canonicalEntities={canonicalEntities}
-      pictureMetaById={pictureMetaById}
-      nodePictureMetaByNodeId={nodePictureMetaByNodeId}
-      mode={mode}
-      selectedNode={selectedNode}
-      versions={versions}
-      currentVersion={currentVersion}
-      currentVersionIsPublished={isPublished}
-      accessMode={accessMode}
-      boardViewMode={boardViewMode}
-      currentAnalysisCeId={currentAnalysisCeId}
-      analysisBoardInfo={analysisBoardInfo}
-      onVersionChange={handleVersionChange}
-      onCreateVersion={onCreateVersion}
-      onDeleteVersion={onDeleteVersion}
-      onRequestEditMode={onRequestEditMode}
-      onPublish={handlePublish}
-      onCurrentVersionPublishedChange={setIsPublished}
-      onNodeAddClick={handleNodeAddClick}
-      onNodeDeleteClick={handleNodeDeleteClick}
-      onNodeEditClick={handleNodeEditClick}
-      onEdgeAddClick={handleEdgeAddClick}
-      onEdgeDeleteClick={handleEdgeDeleteClick}
-      onBoardClick={handleBoardClick}
-      onNodeClick={handleNodeClick}
-      onNodePositionChange={handleNodePositionChange}
-      onSelectedNodeSave={handleSelectedNodeSave}
-      onCanonicalEntitiesChange={handleCanonicalEntitiesSave}
-      onCanonicalEntityDelete={handleCanonicalEntityDelete}
-      onCreateCanonicalEntityDraft={createCanonicalEntityDraft}
-      onCanonicalEntitiesManagerClose={handleCanonicalEntitiesDialogClose}
-      onLoadImageMetadata={handleLoadImageMetadata}
-      onUpdateImageMetadata={handleUpdateImageMetadata}
-      onUploadImage={handleUploadImage}
-      onOpenCanonicalEntityAnalysis={onOpenCanonicalEntityAnalysis}
-    />
+    <>
+      <InvestigationBoard
+        title={title}
+        nodes={nodes}
+        edges={edges}
+        canonicalEntities={canonicalEntities}
+        pictureMetaById={pictureMetaById}
+        nodePictureMetaByNodeId={nodePictureMetaByNodeId}
+        mode={mode}
+        selectedNode={selectedNode}
+        versions={versions}
+        currentVersion={currentVersion}
+        currentVersionIsPublished={isPublished}
+        accessMode={accessMode}
+        boardViewMode={boardViewMode}
+        currentAnalysisCeId={currentAnalysisCeId}
+        analysisBoardInfo={analysisBoardInfo}
+        onVersionChange={handleVersionChange}
+        onCreateVersion={onCreateVersion}
+        onDeleteVersion={onDeleteVersion}
+        onRequestEditMode={onRequestEditMode}
+        onPublish={handlePublish}
+        onConfirmUnsavedBoardLoss={confirmUnsavedBoardLoss}
+        onCurrentVersionPublishedChange={setIsPublished}
+        onNodeAddClick={handleNodeAddClick}
+        onNodeDeleteClick={handleNodeDeleteClick}
+        onNodeEditClick={handleNodeEditClick}
+        onEdgeAddClick={handleEdgeAddClick}
+        onEdgeDeleteClick={handleEdgeDeleteClick}
+        onBoardClick={handleBoardClick}
+        onNodeClick={handleNodeClick}
+        onNodePositionChange={handleNodePositionChange}
+        onSelectedNodeSave={handleSelectedNodeSave}
+        onCanonicalEntitiesChange={handleCanonicalEntitiesSave}
+        onCanonicalEntityDelete={handleCanonicalEntityDelete}
+        onCreateCanonicalEntityDraft={createCanonicalEntityDraft}
+        onCanonicalEntitiesManagerClose={handleCanonicalEntitiesDialogClose}
+        onLoadImageMetadata={handleLoadImageMetadata}
+        onUpdateImageMetadata={handleUpdateImageMetadata}
+        onUploadImage={handleUploadImage}
+        onOpenCanonicalEntityAnalysis={onOpenCanonicalEntityAnalysis}
+      />
+
+      {unsavedBoardDialog && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1250,
+            padding: 20,
+          }}
+          onClick={() => {
+            unsavedBoardDialog.resolve("cancel");
+            setUnsavedBoardDialog(null);
+          }}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "min(480px, calc(100vw - 40px))",
+              background: "#fff",
+              borderRadius: 12,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+              padding: "18px 20px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Несохранённые изменения</div>
+            <div style={{ fontSize: 13, lineHeight: 1.5, color: "#333" }}>
+              В результате этого действия несохранённые изменения на доске будут потеряны.
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  unsavedBoardDialog.resolve("cancel");
+                  setUnsavedBoardDialog(null);
+                }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #bbb",
+                  backgroundColor: "#f2f2f2",
+                  color: "#333",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                Отменить действие
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  unsavedBoardDialog.resolve("discard");
+                  setUnsavedBoardDialog(null);
+                }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #bbb",
+                  backgroundColor: "#fff",
+                  color: "#333",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                Продолжить, не сохраняя
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  unsavedBoardDialog.resolve("save");
+                  setUnsavedBoardDialog(null);
+                }}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: "1px solid #555",
+                  backgroundColor: "#333",
+                  color: "#f5f5f5",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+              >
+                Сохранить доску перед действием
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
